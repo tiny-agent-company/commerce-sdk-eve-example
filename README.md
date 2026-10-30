@@ -1,35 +1,54 @@
 # commerce-sdk-eve-example
 
-This is an [eve](https://eve.dev) agent bootstrapped with [`eve init`](https://eve.dev/docs/reference/cli#eve-init).
+An [eve](https://eve.dev) agent that buys things for its users at real stores with the [Agentcard Commerce SDK](https://www.npmjs.com/package/@agent-cards/commerce-sdk). The agent gets one `buy` tool: it sends what the shopper says to Agentcard, and Agentcard finds the products, builds the cart and places the order once the shopper approves it.
 
 ## Getting started
 
-First, run the development server:
+1. Install dependencies:
 
-```bash
-eve dev
-```
+   ```bash
+   npm install
+   ```
 
-The development TUI opens an interactive session where you can send messages to your agent.
+2. Copy the example env file and fill it in:
 
-Start by editing `agent/instructions.md` to define the agent's identity, purpose, tone, and response guidelines. Configure its model and runtime behavior in `agent/agent.ts`.
+   ```bash
+   cp .env.example .env
+   ```
 
-Add capabilities under `agent/`, including tools, connections, channels, skills, subagents, and schedules. eve reloads your changes as you work.
+   | Variable | Where to get it |
+   |---|---|
+   | `AGENTCARD_CLIENT_ID`, `AGENTCARD_CLIENT_SECRET` | Run `npx agent-cards init` to create your company and its credentials. |
+   | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
 
-## Learn more
+3. Start the development server:
 
-To learn more about eve, explore these resources:
+   ```bash
+   npm run dev
+   ```
 
-- [eve documentation](https://eve.dev/docs) — learn about eve's features and authoring APIs.
-- [Build an Agent tutorial](https://eve.dev/docs/tutorial/first-agent) — build and deploy an agent step by step.
-- [eve on GitHub](https://github.com/vercel/eve) — view the source and contribute.
+   The development TUI opens a chat with your agent. Try "two packs of AA batteries from Amazon".
+
+## How it works
+
+| File | What it does |
+|---|---|
+| [`agent/agent.ts`](agent/agent.ts) | Sets the model, `claude-sonnet-5`. |
+| [`agent/instructions.md`](agent/instructions.md) | The system prompt. The Shopping section tells the agent to pass the shopper's words to `buy`, keep its reply short, and order only after the shopper says yes. |
+| [`agent/tools/buy.ts`](agent/tools/buy.ts) | Wraps the SDK's `buyTool` as an eve tool. It keeps one buy tool per shopper and session, so each chat holds its own cart, and streams product, Vault and approval links to the chat as progress snapshots while the model reads only the final result. |
+| [`agent/channels/eve.ts`](agent/channels/eve.ts) | The HTTP channel. The signed-in user becomes the shopper; without auth, each session is its own shopper. |
+
+The shopper approves each purchase on an Agentcard approval page, and a new shopper saves a card on a Vault page first. The model never sees these links, so it can't paste them into the chat. Your app shows them from the tool's snapshots.
 
 ## Deploy on Vercel
 
-Deploy your agent to [Vercel](https://vercel.com) from the project root:
-
 ```bash
-eve deploy
+npm run deploy
 ```
 
-`eve deploy` links a Vercel project if needed and deploys the agent to production. See the [eve deployment documentation](https://eve.dev/docs/guides/deployment/vercel) for authentication, environment variables, and deployment options.
+Set `AGENTCARD_CLIENT_ID`, `AGENTCARD_CLIENT_SECRET` and `ANTHROPIC_API_KEY` on the Vercel project first, and replace `placeholderAuth()` in `agent/channels/eve.ts` with your app's auth provider before going to production. See the [eve deployment docs](https://eve.dev/docs/guides/deployment/vercel).
+
+## Learn more
+
+- [Commerce SDK README](https://www.npmjs.com/package/@agent-cards/commerce-sdk): links, pop-ups, events without webhooks, and every other framework.
+- [eve documentation](https://eve.dev/docs): tools, channels, skills, subagents and schedules.
