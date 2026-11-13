@@ -5,6 +5,8 @@ import { defineTool } from "eve/tools";
 const agentcard = new AgentcardClient({
   clientId: process.env.AGENTCARD_CLIENT_ID ?? "",
   clientSecret: process.env.AGENTCARD_CLIENT_SECRET ?? "",
+  // Agentcard's API address; unset means production (https://api.agentcard.sh).
+  ...(process.env.AGENTCARD_BASE_URL ? { baseUrl: process.env.AGENTCARD_BASE_URL } : {}),
 });
 
 /** One buy tool per shopper and chat, kept so each chat holds its own cart. */
