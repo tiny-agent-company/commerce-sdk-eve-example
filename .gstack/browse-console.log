@@ -1,0 +1,20 @@
+[2026-10-26T14:18:02.002Z] [error] Failed to load resource: the server responded with a status of 429 ()
+[2026-10-26T14:18:02.653Z] [warning] An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.
+[2026-10-26T14:18:02.879Z] [error] requestStorageAccess: Permission denied.
+[2026-10-26T14:18:03.051Z] [warning] An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing.
+[2026-10-26T14:18:03.099Z] [error] requestStorageAccess: Permission denied.
+[2026-10-26T14:18:08.394Z] [verbose] Rendering was performed in a subtree hidden by content-visibility.
+[2026-10-26T14:18:08.394Z] [verbose] Rendering was performed in a subtree hidden by content-visibility.
+[2026-10-26T14:18:08.394Z] [verbose] Rendering was performed in a subtree hidden by content-visibility.
+[2026-10-26T14:18:08.394Z] [verbose] Rendering was performed in a subtree hidden by content-visibility.
+[2026-10-26T14:18:08.394Z] [verbose] Rendering was performed in a subtree hidden by content-visibility.
+[2026-10-26T14:21:32.361Z] [error] Failed to load resource: the server responded with a status of 429 ()
+[2026-10-26T14:38:59.380Z] [error] Failed to load resource: the server responded with a status of 429 (Too Many Requests)
+[2026-10-26T14:39:01.982Z] [warning] Error with Permissions-Policy header: Unrecognized feature: 'ambient-light-sensor'.
+[2026-10-26T14:39:01.982Z] [warning] Error with Permissions-Policy header: Unrecognized feature: 'battery'.
+[2026-10-26T14:39:01.982Z] [warning] Error with Permissions-Policy header: Unrecognized feature: 'document-domain'.
+[2026-10-26T14:39:01.982Z] [warning] Error with Permissions-Policy header: Unrecognized feature: 'execution-while-not-rendered'.
+[2026-10-26T14:39:01.982Z] [warning] Error with Permissions-Policy header: Unrecognized feature: 'execution-while-out-of-viewport'.
+[2026-10-26T14:39:01.982Z] [warning] Error with Permissions-Policy header: Unrecognized feature: 'navigation-override'.
+[2026-10-26T14:39:01.982Z] [warning] Error with Permissions-Policy header: Unrecognized feature: 'web-share'.
+[2026-10-26T14:39:01.982Z] [error] Failed to load resource: the server responded with a status of 429 ()
