@@ -1,6 +1,7 @@
 import { AgentcardClient, BUY_TOOL_DESCRIPTION, buyTool, buyToolDefinition } from "@agent-cards/commerce-sdk";
 import type { BuyToolLink, BuyToolResult } from "@agent-cards/commerce-sdk";
 import { defineTool } from "eve/tools";
+import { recordBuy, type BuyRecord } from "../lib/agnost.js";
 
 const agentcard = new AgentcardClient({
   clientId: process.env.AGENTCARD_CLIENT_ID ?? "",
@@ -9,6 +10,27 @@ const agentcard = new AgentcardClient({
 
 /** One buy tool per shopper and chat, kept so each chat holds its own cart. */
 const shoppers = new Map<string, ReturnType<typeof buyTool>>();
+
+/** The answer the model read, which holds no link, as the record Agnost keeps of it. */
+function forAgnost(text: string, confirm: boolean): BuyRecord {
+  try {
+    const answer = JSON.parse(text) as { status?: string; reply?: string; products?: { name: string }[]; cart?: { store: string; total: string } | null };
+    return {
+      reply: answer.reply ?? text,
+      ok: answer.status !== "declined",
+      facts: {
+        status: answer.status ?? null,
+        confirm,
+        products_shown: answer.products?.length ?? 0,
+        products: (answer.products ?? []).map((product) => product.name).join(" | ").slice(0, 1500),
+        cart_store: answer.cart?.store ?? null,
+        cart_total: answer.cart?.total ?? null,
+      },
+    };
+  } catch {
+    return { reply: text, ok: true, facts: { status: null, confirm } };
+  }
+}
 
 export default defineTool({
   description: BUY_TOOL_DESCRIPTION,
@@ -23,6 +45,9 @@ export default defineTool({
       buy = buyTool({ agentcard, externalUserId, threadId: ctx.session.id });
       shoppers.set(key, buy);
     }
+
+    // Agnost AI keeps a record of the call when AGNOST_ORG_ID is set: the shopper's words now, the answer once it is in.
+    const record = recordBuy({ shopperId: externalUserId, conversationId: ctx.session.id, ask: input.ask as string });
 
     // The links and carts reach the chat as progress snapshots; the model only reads the final result.
     const links: BuyToolLink[] = [];
@@ -51,7 +76,14 @@ export default defineTool({
       await new Promise<void>((resolve) => (changed = resolve));
       if (!done) yield snapshot();
     }
-    const text = await run;
+    let text: string;
+    try {
+      text = await run;
+    } catch (error) {
+      await record({ reply: error instanceof Error ? error.message : String(error), ok: false, facts: { status: "error", confirm: input.confirm === true } });
+      throw error;
+    }
+    await record(forAgnost(text, input.confirm === true));
     yield snapshot();
     yield text;
   },
