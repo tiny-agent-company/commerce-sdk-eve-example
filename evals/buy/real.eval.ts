@@ -14,18 +14,22 @@ import { DATASET, draftsWaiting, loadRealAsks, REVIEWED, rowsToRun } from "../li
  *
  * At most REAL_ASKS_LIMIT rows run (30 unless set), the newest first, so the cost of a run does not grow with the
  * dataset. Without BRAINTRUST_API_KEY, with an empty dataset, or while no row is reviewed, the file holds one eval
- * that skips and says why, with the number of drafts waiting for review.
+ * that skips and says why, with the number of drafts waiting for review. REAL_ASKS_ONLY=<row id> runs that row alone
+ * (several ids, separated by commas), which is how one ask is sent again while its fix is being worked on.
  */
 const loaded = await loadRealAsks();
 const limit = Number(process.env.REAL_ASKS_LIMIT ?? 30);
 const drafts = /^(1|true|yes)$/i.test(process.env.REAL_ASKS_RUN_DRAFTS ?? "");
-const rows = rowsToRun(loaded.rows, Number.isFinite(limit) ? limit : 30, drafts);
+const only = (process.env.REAL_ASKS_ONLY ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+const rows = rowsToRun(loaded.rows, Number.isFinite(limit) ? limit : 30, drafts, only);
 const waiting = draftsWaiting(loaded.rows);
 const whyNone =
   loaded.why ??
-  (limit <= 0
+  (only.length > 0
+    ? `REAL_ASKS_ONLY names no row of the Braintrust dataset "${DATASET}" that can run`
+    : limit <= 0
     ? "REAL_ASKS_LIMIT is 0"
-    : `no real ask has been reviewed yet: ${waiting} draft${waiting === 1 ? " is" : "s are"} waiting for review in the Braintrust dataset "${DATASET}". Set a row's metadata.review to "reviewed" to run it, or set REAL_ASKS_RUN_DRAFTS=1 to run the drafts by hand`);
+    : `no real ask has been reviewed yet: ${waiting} draft${waiting === 1 ? " is" : "s are"} waiting for review in the Braintrust dataset "${DATASET}". Give a row's post in Slack a thumbs up to run it, or set REAL_ASKS_RUN_DRAFTS=1 to run the drafts by hand`);
 if (rows.length > 0 && waiting > 0 && !drafts) console.log(`Real asks: ${rows.length} reviewed row${rows.length === 1 ? "" : "s"} to run; ${waiting} draft${waiting === 1 ? " is" : "s are"} waiting for review in Braintrust and will not run.`);
 
 export default rows.length === 0

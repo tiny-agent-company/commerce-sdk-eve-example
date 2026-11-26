@@ -9,7 +9,7 @@ export interface Day {
   conversations: Conversation[];
   messages: Message[];
   /** How many conversations the day held, and how many were left out as test traffic, by reason. */
-  counts: { all: number; testMode: number; ownCompany: number; skippedCompany: number; skippedClient: number; skippedShopper: number; machine: number; read: number };
+  counts: { all: number; testMode: number; ownCompany: number; skippedCompany: number; skippedClient: number; skippedShopper: number; read: number };
   /** Checkout attempts that stopped short, by conversation. */
   checkouts: { conversation: string; stage: string; stopped: string | null }[];
 }
@@ -64,22 +64,22 @@ const HOURS_AFTER = 12;
 
 /**
  * The day's conversations with a reason on each one that is test traffic: a company's test mode (or no recorded mode),
- * a company the backend marks as Agentcard's own (unless it is on the keep list), a company, client or shopper on the
- * skip lists, or a shopper who opened more conversations in the day than a person does, which is a monitor or a benchmark.
+ * a company the backend marks as Agentcard's own (unless it is on the keep list), or a company, client or shopper on
+ * the skip lists. Automated callers are named by their exact ids on those lists and never guessed from how much they
+ * send: a shopper is not a machine for being busy.
  */
 const DAY = `
   with day as (
-    select c.id, c."userId", c."organizationId", c."clientId", c.sandbox, o.internal, count(*) over (partition by c."userId") as opened
+    select c.id, c."userId", c."organizationId", c."clientId", c.sandbox, o.internal
       from "ChatConversation" c
       left join "Organization" o on o.id = c."organizationId"
      where c.kind = 'buy' and c."createdAt" >= $1 and c."createdAt" < $2)
   select id,
          case when sandbox is not false then 'testMode'
-              when internal is true and not ("organizationId" = any($7::text[])) then 'ownCompany'
+              when internal is true and not ("organizationId" = any($6::text[])) then 'ownCompany'
               when "organizationId" = any($3::text[]) then 'skippedCompany'
               when "clientId" = any($4::text[]) then 'skippedClient'
               when "userId" = any($5::text[]) then 'skippedShopper'
-              when opened > $6::int then 'machine'
               else 'read' end as why
     from day`;
 
@@ -174,7 +174,7 @@ function connection(env: NodeJS.ProcessEnv): Record<string, unknown> {
  */
 async function fromDatabase(day: string, env: NodeJS.ProcessEnv): Promise<Day> {
   const list = (name: string) => (env[name] ?? "").split(",").map((id) => id.trim()).filter(Boolean);
-  const skip = [list("REAL_ASKS_SKIP_COMPANIES"), list("REAL_ASKS_SKIP_CLIENTS"), list("REAL_ASKS_SKIP_SHOPPERS"), Number(env.REAL_ASKS_MOST_PER_SHOPPER ?? 40), list("REAL_ASKS_KEEP_COMPANIES")];
+  const skip = [list("REAL_ASKS_SKIP_COMPANIES"), list("REAL_ASKS_SKIP_CLIENTS"), list("REAL_ASKS_SKIP_SHOPPERS"), list("REAL_ASKS_KEEP_COMPANIES")];
   const { default: pg } = await import("pg");
   // The backend's columns hold UTC without a zone, so the bounds go as plain UTC text and no driver shifts them.
   const utc = (hours: number) => new Date(Date.parse(`${day}T00:00:00Z`) + hours * 3600 * 1000).toISOString().replace("T", " ").replace("Z", "");
@@ -190,7 +190,7 @@ async function fromDatabase(day: string, env: NodeJS.ProcessEnv): Promise<Day> {
     const checkouts = await client.query(CHECKOUTS, [ids, until]);
     await client.query("rollback");
     if (conversations.rows.length === MOST_CONVERSATIONS) console.warn(`The day holds more than ${MOST_CONVERSATIONS} conversations; only the first ${MOST_CONVERSATIONS} were read.`);
-    const counts = { all: 0, testMode: 0, ownCompany: 0, skippedCompany: 0, skippedClient: 0, skippedShopper: 0, machine: 0, read: 0 };
+    const counts = { all: 0, testMode: 0, ownCompany: 0, skippedCompany: 0, skippedClient: 0, skippedShopper: 0, read: 0 };
     for (const row of counted.rows as { why: keyof typeof counts; n: number }[]) {
       counts[row.why] = row.n;
       counts.all += row.n;

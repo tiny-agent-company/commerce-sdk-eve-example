@@ -6,10 +6,12 @@
  *   node real-asks/pick.ts --day 2026-11-24
  *   node real-asks/pick.ts --dry-run       # everything but the save
  *
+ * Each saved row is also posted to Slack for review, when SLACK_BOT_TOKEN and SLACK_EVALS_CHANNEL are set (review-post.ts).
+ *
  * Everything it needs comes from environment variables (the README lists them); it reads no settings file.
  *
  * It prints numbers only. A shopper's words are never printed, logged or written to a file: they go from the database
- * to the model that cleans them and into Braintrust, and nowhere else.
+ * to the model that cleans them, and only the cleaned text goes on, to Braintrust and to the review post in Slack.
  *
  * It ends with one line that starts `real-asks ok:` and exit code 0, or one line that starts `real-asks failed:` and
  * exit code 1 (the run broke part way) or 2 (a setting is missing, nothing was read).
@@ -21,6 +23,7 @@ import { cardsOf } from "./cards.ts";
 import { isOwnEvalAsk, ownEvalAsks } from "./own-evals.ts";
 import { prepare, type Case } from "./prepare.ts";
 import { readDay, source } from "./read.ts";
+import { postRows, removedWords, shortReply, slackTarget, type Updatable } from "./review-post.ts";
 import { alike, scrub } from "./scrub.ts";
 import { picks, signsOf, turnsOf, typedAsk, type Sign, type Turn } from "./signals.ts";
 
@@ -33,8 +36,8 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex").s
 const add = (counts: Record<string, number>, key: string) => void (counts[key] = (counts[key] ?? 0) + 1);
 
 /** The numbers of the run so far, for the last line: what a person or an alarm reads when the job ends. */
-const run = { day: "", step: "starting", conversations: 0, read: 0, asks: 0, prepared: 0, picked: 0, saved: 0, rows: 0 };
-const line = () => `day=${run.day} conversations=${run.conversations} read=${run.read} asks=${run.asks} prepared=${run.prepared} picked=${run.picked} saved=${run.saved} rows_in_dataset=${run.rows}`;
+const run = { day: "", step: "starting", conversations: 0, read: 0, asks: 0, prepared: 0, picked: 0, saved: 0, rows: 0, posted: 0 };
+const line = () => `day=${run.day} conversations=${run.conversations} read=${run.read} asks=${run.asks} prepared=${run.prepared} picked=${run.picked} saved=${run.saved} rows_in_dataset=${run.rows} posted_for_review=${run.posted}`;
 
 /** A setting is missing: nothing was read and nothing was saved. */
 class Missing extends Error {}
@@ -175,6 +178,7 @@ async function main(): Promise<void> {
   let saved = 0;
   let overPerCompany = 0;
   let cardsStored = 0;
+  const toPost: { id: string; messages: string[]; reply: string }[] = [];
   for (const item of chosen) {
     if (saved >= mostSaved) break;
     const id = `real-${hash(`${item.turn.conversation.id}:${item.turn.ask.id}`)}`;
@@ -195,6 +199,9 @@ async function main(): Promise<void> {
     const shown = cardsOf(item.turn);
     if (shown?.stored) cardsStored += 1;
     if (dry || !dataset) continue;
+    // The answer the shopper got, cut to a sentence or two and cleaned, for whoever reviews the row.
+    const reply = await shortReply(item.turn.replies.map((message) => message.body).join("\n\n"), removedWords([item.turn.ask.body, ...item.turn.earlier.map((message) => message.body)], item.made.messages));
+    toPost.push({ id, messages: item.made.messages, reply });
     dataset.insert({
       id,
       input: { messages: item.made.messages },
@@ -208,8 +215,9 @@ async function main(): Promise<void> {
         kind: item.made.kind,
         conversation: hash(item.turn.conversation.id),
         company,
-        // What the shopper was shown that day, for whoever reviews the row. Product names only; the reply is left out.
+        // What the shopper was shown that day, for whoever reviews the row: product names, and the start of the reply, cleaned.
         seen: {
+          reply,
           cards: shown?.cards ?? [],
           cards_are: shown ? (shown.stored ? "the cards the backend stored with the turn" : "a guess: the first products of the conversation's last search") : "not known",
           ...(item.verdict ? { judge_failed: item.verdict.failed, judge_note: item.verdict.note } : {}),
@@ -218,6 +226,13 @@ async function main(): Promise<void> {
     });
   }
   if (dataset && !dry) await dataset.flush();
+  // One short Slack post for each saved row, so a person can review it with an emoji. Without the Slack settings the
+  // rows are saved all the same, and `npm run real-asks:post` posts them later.
+  const slack = slackTarget();
+  if (dataset && !dry && slack && toPost.length > 0) {
+    run.step = "posting the rows for review";
+    run.posted = (await postRows(dataset as unknown as Updatable, toPost, slack)).length;
+  }
   run.saved = dry ? 0 : saved;
   run.rows = dry ? before : before + saved;
 
@@ -248,6 +263,7 @@ async function main(): Promise<void> {
         saved: run.saved,
         saved_with_stored_cards: cardsStored,
         saved_by_kind: byKind,
+        posted_for_review: run.posted,
         rows_before: before,
         rows_now: run.rows,
       },

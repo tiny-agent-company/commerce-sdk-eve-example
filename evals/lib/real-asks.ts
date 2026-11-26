@@ -100,9 +100,12 @@ export async function loadRealAsks(): Promise<{ rows: RealAsk[]; unreadable: num
  * The rows one run sends, at most `limit`, so a day's cost stays bounded however long the dataset grows. Only rows a
  * person marked `reviewed` run: a draft's requirements were written by a model, and an eval that fails against wrong
  * requirements says nothing. `drafts` also runs the rows nobody has reviewed yet, for a run made on purpose by hand;
- * reviewed rows still go first, then the newest. Rejected rows never run.
+ * reviewed rows still go first, then the newest. Rejected rows never run. `only` names the rows to run by id, and
+ * then nothing else runs.
  */
-export function rowsToRun(rows: RealAsk[], limit: number, drafts = false): RealAsk[] {
+export function rowsToRun(rows: RealAsk[], limit: number, drafts = false, only: string[] = []): RealAsk[] {
+  // Rows named one by one run whatever their review says, short of rejected: how one ask is sent again while it is being fixed.
+  if (only.length > 0) return rows.filter((row) => only.includes(row.id) && row.review !== REJECTED);
   const order = (row: RealAsk) => (row.review === REVIEWED ? 0 : 1);
   return rows
     .filter((row) => row.review === REVIEWED || (drafts && row.review !== REJECTED))
