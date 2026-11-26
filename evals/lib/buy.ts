@@ -216,8 +216,7 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
     // Cards from another store are a right answer only when the reply says first that the named store had nothing,
     // could not be searched or cannot be shopped at. Shown without that, they pass for the named store's.
     const others = cards.filter((card) => !expected.store!.test(card.store ?? ""));
-    const stores = [...new Set(others.map((card) => card.store ?? "an unnamed store"))].join(", ");
-    t.score(verdict.then((v) => ({ score: others.length === 0 || v.saysNamedStoreMissed ? 1 : 0, message: others.length === 0 ? "Every card comes from the store the shopper named." : `${others.length} of ${cards.length} cards come from other stores (${stores}), and no reply says first that the named store had none.` })))
+    t.score(verdict.then((v) => ({ score: others.length === 0 || v.saysNamedStoreMissed ? 1 : 0, message: others.length === 0 ? "Every card comes from the store the shopper named." : `${others.length} of ${cards.length} cards come from other stores, and no reply says first that the named store had none:\n${others.map((card) => `   ◦ ${line(card)}`).join("\n")}` })))
       .label("named-store")
       .gate(1);
   }
@@ -236,7 +235,7 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
     }))
       .label("top-cards-accurate")
       .gate(1);
-    t.score(verdict.then((v) => ({ score: v.uncovered.length === 0 ? 1 : 0, message: v.uncovered.length ? `No card is ${v.uncovered.map((what) => `a ${what}`).join(" or ")}.` : "Every item asked for has a card." })))
+    t.score(verdict.then((v) => ({ score: v.uncovered.length === 0 ? 1 : 0, message: v.uncovered.length ? `Something the shopper asked for has no card:\n${v.uncovered.map((what) => `   ◦ ${what}`).join("\n")}` : "Every item asked for has a card." })))
       .label("every-item-covered")
       .gate(1);
     t.score(verdict.then((v) => ({ score: v.badRecommendations.length === 0 ? 1 : 0, message: v.badRecommendations.length ? `A reply recommends something that is not what was asked for:\n${v.badRecommendations.map((one) => `   ◦ ${one}`).join("\n")}` : "Every recommended product is what was asked for." })))
