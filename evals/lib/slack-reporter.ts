@@ -40,18 +40,23 @@ export function slackReporter(): EvalReporter {
       if (result.verdict === "passed" || result.verdict === "skipped") return;
       const missed = result.assertions.filter((assertion) => assertion.errored || assertion.passed === false);
       const ask = context?.evaluation.metadata?.ask;
+      // An eval made from a real shopper's ask posts the names of its failed checks and nothing else: the ask, the
+      // replies and the judge's reasons can all repeat the shopper's words, and those stay in Braintrust.
+      const real = context?.evaluation.tags?.includes("real") ?? false;
       failures.push({
         title: context?.evaluation.description ?? result.id,
-        ask: typeof ask === "string" ? ask : null,
-        reply: result.result.reply ?? null,
+        ask: typeof ask === "string" && !real ? ask : null,
+        reply: real ? null : (result.result.reply ?? null),
         verdict: result.verdict,
-        lines: [
-          ...(result.error ? [`the run broke: ${result.error}`] : []),
-          ...missed.map((assertion) => {
-            const score = assertion.score === undefined ? "" : ` (scored ${assertion.score.toFixed(2)}, needs ${assertion.threshold ?? 1})`;
-            return `${assertion.key ?? assertion.name}${score}${assertion.message ? `: ${assertion.message}` : ""}`;
-          }),
-        ],
+        lines: real
+          ? [...(result.error ? ["the run broke"] : []), `did not pass: ${missed.map((assertion) => assertion.key ?? assertion.name).join(", ") || "see Braintrust"}. The ask and the answer are in Braintrust.`]
+          : [
+              ...(result.error ? [`the run broke: ${result.error}`] : []),
+              ...missed.map((assertion) => {
+                const score = assertion.score === undefined ? "" : ` (scored ${assertion.score.toFixed(2)}, needs ${assertion.threshold ?? 1})`;
+                return `${assertion.key ?? assertion.name}${score}${assertion.message ? `: ${assertion.message}` : ""}`;
+              }),
+            ],
       });
     },
     async onRunComplete(summary: EveEvalRunSummary) {

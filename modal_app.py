@@ -9,7 +9,7 @@ SLACK_BOT_TOKEN, SLACK_EVALS_CHANNEL, BRAINTRUST_API_KEY and, once there is one,
 
 Run by hand:
     modal run modal_app.py::core         # searches, conversations and the judge's own test
-    modal run modal_app.py::everything   # the core set and the coverage matrix
+    modal run modal_app.py::everything   # the core set, the coverage matrix and the real asks that failed
 """
 
 import subprocess
@@ -35,11 +35,11 @@ def run_evals(*flags: str) -> None:
 
 @app.function(image=image, secrets=keys, timeout=1800, cpu=2, memory=4096, retries=0, schedule=modal.Cron("17 */6 * * *", timezone="UTC"))
 def core() -> None:
-    """Every six hours: everything but the coverage matrix."""
-    run_evals("--exclude-tag", "matrix")
+    """Every six hours: everything but the coverage matrix and the real asks."""
+    run_evals("--exclude-tag", "matrix", "--exclude-tag", "real")
 
 
 @app.function(image=image, secrets=keys, timeout=3600, cpu=2, memory=4096, retries=0, schedule=modal.Cron("47 13 * * *", timezone="UTC"))
 def everything() -> None:
-    """Once a day: the core set and the coverage matrix."""
+    """Once a day: the core set, the coverage matrix and the real asks that failed (at most REAL_ASKS_LIMIT of them)."""
     run_evals()

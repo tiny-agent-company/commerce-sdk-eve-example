@@ -109,13 +109,14 @@ const line = (card: Card) => `${card.name.slice(0, 90)} (${card.store ?? "no sto
 
 /**
  * The agent hands the buy tool the shopper's message as it was typed. A reworded ask tests the agent's wording, not the
- * shopper's, and can hide or cause a wrong answer.
+ * shopper's, and can hide or cause a wrong answer. `showWords` is false for a real shopper's ask, whose words stay out
+ * of the check's message.
  */
-export function checkWordsUnchanged(t: EveEvalContext, turn: EveEvalTurn, message: string): void {
+export function checkWordsUnchanged(t: EveEvalContext, turn: EveEvalTurn, message: string, showWords = true): void {
   const plain = (text: unknown) => String(text ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   const sent = buyCalls(turn)[0]?.input.ask;
   if (sent === undefined) return;
-  t.check(sent, satisfies((ask: unknown) => plain(ask) === plain(message), `the buy tool got the shopper's words unchanged (it got: ${String(sent)})`)).label("shopper-words-unchanged");
+  t.check(sent, satisfies((ask: unknown) => plain(ask) === plain(message), `the buy tool got the shopper's words unchanged${showWords ? ` (it got: ${String(sent)})` : ""}`)).label("shopper-words-unchanged");
 }
 
 /**

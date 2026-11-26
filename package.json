@@ -11,6 +11,8 @@
     "deploy": "eve deploy",
     "dev": "eve dev",
     "eval": "eve eval",
+    "real-asks": "node real-asks/pick.ts",
+    "test": "node --test \"real-asks/*.test.ts\"",
     "start": "eve start",
     "typecheck": "tsc"
   },
@@ -25,6 +27,8 @@
   },
   "devDependencies": {
     "@types/node": "24.x",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
     "typescript": "7.0.2"
   },
   "engines": {
