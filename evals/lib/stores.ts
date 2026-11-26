@@ -156,7 +156,16 @@ const otherStores: StoreCase[] = [
     skip: "AutoZone's checkout refuses the shopper's placeholder phone number, which is from the range reserved for fiction, and an eval must not give a real person's number.",
   },
   { store: "Allbirds (a brand's own site)", supplier: "own site", kind: "goods", ask: "Allbirds Tree Runners, men's size 10, from allbirds.com", at: /allbirds/i, product: /tree runner/i, maxPrice: 160 },
-  { store: "Costco (a store's own brand)", supplier: "own site", kind: "goods", ask: "Kirkland Signature extra virgin olive oil from Costco", at: /costco/i, product: /olive oil/i, maxPrice: 60 },
+  {
+    store: "Costco (a store's own brand)",
+    supplier: "own site",
+    kind: "goods",
+    ask: "Kirkland Signature extra virgin olive oil from Costco",
+    at: /costco/i,
+    product: /olive oil/i,
+    maxPrice: 60,
+    skip: "Costco's checkout needs the shopper's own Costco account before it builds a cart. An eval has no account to sign in to, and must not use a real one.",
+  },
   { store: "eBay, a used listing", supplier: "used listings", kind: "goods", ask: "a used Canon AE-1 film camera on eBay", at: /ebay/i, product: /canon/i, maxPrice: 250 },
   { store: "a specialty coffee roaster", supplier: "coffee", kind: "goods", ask: "a bag of specialty whole bean coffee from Onyx Coffee Lab's own site", product: /coffee|onyx/i, maxPrice: 60 },
   {

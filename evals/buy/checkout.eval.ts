@@ -1,6 +1,6 @@
 import { defineEval } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
-import { cartStep, checkCart, checkFieldsAgreeWithReply, checkNothingOrdered, checkReached, checkTotalNeverMovesSilently, logPath, sandboxCredentials, sayYes, shop, stillPricing } from "../lib/purchase.js";
+import { cartStep, checkCart, checkFieldsAgreeWithReply, checkNothingOrdered, checkReached, checkTotalNeverMovesSilently, logPath, readyForTheYes, sandboxCredentials, sayYes, shop, stillPricing } from "../lib/purchase.js";
 import { STORES, SUPPLIERS } from "../lib/stores.js";
 
 /**
@@ -18,7 +18,7 @@ import { STORES, SUPPLIERS } from "../lib/stores.js";
  *    its retail supplier, the total is an estimate until the order goes in, and the cart says so.
  * 2. The yes is stopped at the payment. For goods only, the shopper then says yes, and the answer must be the payment
  *    step and nothing past it. A retailer may first price the order's tax and shipping, which takes a moment: the
- *    shopper waits and says yes again, a few times at most, and a changed total must be named in the reply. In the sandbox that is a refusal that says test mode cannot pay
+ *    shopper waits and says yes again, for about six minutes at most, and a changed total must be named in the reply. In the sandbox that is a refusal that says test mode cannot pay
  *    (`sandbox_mode`), or that the shopper has no test card (`test_card_missing`, with the cart still held at the
  *    store's payment form). With a saved card it would be the approval page (`approval_sent`, an `approval` link), and
  *    for a new live shopper the page to save a card (`needs_card`, a `vault` link); both count. `placing` and
@@ -52,8 +52,8 @@ export default STORES.map((row) =>
     description: `checkout: ${row.store}, through the ${SUPPLIERS[row.supplier]}`,
     tags: ["checkout", row.kind],
     metadata: { ask: row.ask, store: row.store, supplier: SUPPLIERS[row.supplier] },
-    // A store's own checkout can take a few minutes to price a cart.
-    timeoutMs: 780_000,
+    // A store's own checkout can take a few minutes to price a cart, and a retailer a few more to price the yes.
+    timeoutMs: 1_200_000,
     async test(t) {
       if (row.skip) t.skip(row.skip);
       if (row.skipCheckout) t.skip(row.skipCheckout);
@@ -88,12 +88,13 @@ export default STORES.map((row) =>
       } else {
         checkFieldsAgreeWithReply(t, ready);
         // The yes. A store may answer one with its newly priced total and ask again, and a store that is still pricing
-        // the order's tax and shipping takes a while to send its total, so the shopper waits and says yes again: five
-        // times at most, about two minutes of waiting.
+        // the order's tax and shipping can take several minutes to send its total, so the shopper waits half a minute
+        // and says yes again: about six minutes of waiting at most.
         let step = await sayYes(t, purchase);
-        for (let again = 0; again < 4 && step && step.answer?.status === "needs_input"; again++) {
+        for (let again = 0; again < 12 && step && step.answer?.status === "needs_input"; again++) {
           if (stillPricing(step.answer)) await t.sleep(30_000);
-          else if (step.answer.next_action !== "confirm") break;
+          else if (readyForTheYes(step.answer)) checkFieldsAgreeWithReply(t, step);
+          else break;
           step = await sayYes(t, purchase, "yes, place the order");
         }
         if (checkReached(t, purchase, "yes-answered", "the yes gets an answer") && step) {

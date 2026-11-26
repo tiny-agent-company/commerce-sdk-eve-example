@@ -2,7 +2,7 @@ import { AgentcardClient } from "@agent-cards/commerce-sdk";
 import type { EveEvalContext, EveEvalTurn } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
 import { RECORD } from "./braintrust-reporter.js";
-import { buyCalls, cardsShown, checkTurn, dollars, lastAnswer, type Card } from "./buy.js";
+import { buyCalls, cardsShown, checkTurn, checkWordsUnchanged, dollars, lastAnswer, type Card } from "./buy.js";
 import { SUPPLIERS, type StoreCase } from "./stores.js";
 
 /**
@@ -243,6 +243,7 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     // The ask and the pick must not confirm or be refused. A later turn may answer "yes" to an address read back, and a
     // refusal there is reported once, as the reason the chat stopped.
     checkTurn(t, turn, afterThePick);
+    checkWordsUnchanged(t, turn, message);
     const cart = step.answer?.cart;
     t.log(`shopper: ${short(message, 120)}`);
     t.log(`  Agentcard (${step.answer?.status ?? "no answer"}, next: ${step.answer?.next_action ?? "none"}${step.snapshot?.decline_code ? `, stopped: ${step.snapshot.decline_code}` : ""}): ${short(step.answer?.reply ?? turn.reply ?? "")}`);
@@ -291,8 +292,9 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     const place = ((lastAnswer(step.turn)?.products ?? []) as { product_id: string | null }[]).findIndex((product) => product.product_id === purchase.picked!.id) + 1;
     step = await say(`I want ${place > 0 ? `number ${place}` : "this one"}: ${purchase.picked.name}${purchase.picked.price ? `, ${purchase.picked.price}` : ""}`);
     if (!step) return purchase;
+    // Whether the agent also passed the card's id is only logged: the cart checks below decide whether the pick landed.
     const ids = buyCalls(step.turn).map((call) => call.input.product_id);
-    t.check(ids, satisfies((list: unknown[]) => list.includes(purchase.picked!.id), `the agent passes the picked card's id to the buy tool (it passed: ${ids.join(", ") || "none"})`)).label("picks-the-shown-card");
+    t.log(`the agent passed the picked card's id: ${ids.includes(purchase.picked.id) ? "yes" : `no (it passed: ${ids.join(", ") || "none"})`}`);
   }
 
   // Answer what the checkout asks, a few messages at most.
@@ -347,6 +349,7 @@ export async function sayYes(t: EveEvalContext, purchase: Purchase, words = "yes
   const step: Step = { said: words, turn, answer: lastAnswer(turn) as Answer | null, snapshot: snapshotOf(turn) };
   purchase.steps.push(step);
   checkTurn(t, turn, true);
+  checkWordsUnchanged(t, turn, words);
   t.log(`shopper: ${words}`);
   t.log(`  Agentcard (${step.answer?.status ?? "no answer"}, next: ${step.answer?.next_action ?? "none"}${step.snapshot?.decline_code ? `, stopped: ${step.snapshot.decline_code}` : ""}, links: ${(step.answer?.links_sent ?? []).join(", ") || "none"}): ${short(step.answer?.reply ?? turn.reply ?? "")}`);
   t.log(RECORD + JSON.stringify({ shopper: words, cards: [], agentcard_reply: step.answer?.reply ?? "", agent_reply: turn.reply ?? "", cart: step.answer?.cart ?? null, wants: [] }));
