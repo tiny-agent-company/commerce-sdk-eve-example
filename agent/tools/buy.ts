@@ -8,6 +8,19 @@ const agentcard = new AgentcardClient({
   clientSecret: process.env.AGENTCARD_CLIENT_SECRET ?? "",
 });
 
+/** A picture of the store's page where it stopped the checkout (sold out, page gone, its own error page), for the app to show. */
+type StoreScreenshot = { url: string; store: string; reason: string; expires_at: string | null };
+
+/**
+ * The picture of the store's page when the store itself stopped the checkout, read from Agentcard's answer as it came, or null.
+ * The model never reads it: the app shows it beside the reply, so the shopper sees it was the store that said no.
+ */
+function storeScreenshotOf(result: BuyToolResult | undefined): StoreScreenshot | null {
+  const shot = result?.envelope?.store_screenshot as Partial<StoreScreenshot> | undefined;
+  if (!shot || typeof shot.url !== "string" || !shot.url.startsWith("https://") || typeof shot.store !== "string") return null;
+  return { url: shot.url, store: shot.store, reason: typeof shot.reason === "string" ? shot.reason : "store_stop", expires_at: typeof shot.expires_at === "string" ? shot.expires_at : null };
+}
+
 /** One buy tool per shopper and chat, kept so each chat holds its own cart. */
 const shoppers = new Map<string, ReturnType<typeof buyTool>>();
 
@@ -70,7 +83,7 @@ export default defineTool({
         changed();
       },
     });
-    const snapshot = () => ({ links: [...links], more: [...more], carts: results.at(-1)?.carts ?? [], status: results.at(-1)?.status ?? null });
+    const snapshot = () => ({ links: [...links], more: [...more], carts: results.at(-1)?.carts ?? [], status: results.at(-1)?.status ?? null, storeScreenshot: storeScreenshotOf(results.at(-1)) });
 
     let done = false;
     const run = turn.handle(input).finally(() => {

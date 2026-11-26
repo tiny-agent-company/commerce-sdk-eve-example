@@ -42,6 +42,8 @@ An [eve](https://eve.dev) agent that buys things for its users at real stores wi
 
 The shopper approves each purchase on an Agentcard approval page, and a new shopper saves a card on a Vault page first. The model never sees these links, so it can't paste them into the chat. Your app shows them from the tool's snapshots.
 
+When the store itself stops a checkout (the product sold out, its page is gone, or the store showed its own error page), the snapshot's `storeScreenshot` holds a picture of the store's page as the checkout stopped: its `url`, the `store`, the `reason` and when the link stops opening (`expires_at`). Show it as an image beside the reply, so the shopper can see the store said no and not Agentcard. The model never reads its link. It is null for every other answer.
+
 ## Evals
 
 The evals send real shopper messages to the agent, which calls the live buy tool, and grade the answer. Nothing is ever ordered: no eval says yes to a cart, and each one fails if a call tries to confirm an order.
