@@ -89,13 +89,17 @@ export default STORES.map((row) =>
         checkFieldsAgreeWithReply(t, ready);
         // The yes. A store may answer one with its newly priced total and ask again, and a store that is still pricing
         // the order's tax and shipping can take several minutes to send its total, so the shopper waits half a minute
-        // and says yes again: about six minutes of waiting at most.
+        // and says yes again: about six minutes of waiting at most. A yes to a newly priced total names that total, as a
+        // shopper would, so it is never read as the yes to the old one.
         let step = await sayYes(t, purchase);
         for (let again = 0; again < 12 && step && step.answer?.status === "needs_input"; again++) {
+          let words = "yes, place the order";
           if (stillPricing(step.answer)) await t.sleep(30_000);
-          else if (readyForTheYes(step.answer)) checkFieldsAgreeWithReply(t, step);
-          else break;
-          step = await sayYes(t, purchase, "yes, place the order");
+          else if (readyForTheYes(step.answer)) {
+            checkFieldsAgreeWithReply(t, step);
+            if (step.answer.cart?.total) words = `yes, place the order for ${step.answer.cart.total}`;
+          } else break;
+          step = await sayYes(t, purchase, words);
         }
         if (checkReached(t, purchase, "yes-answered", "the yes gets an answer") && step) {
           const status = step.answer?.status ?? "no answer";
