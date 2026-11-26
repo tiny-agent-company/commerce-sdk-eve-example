@@ -115,8 +115,7 @@ The asks themselves are never in this repository, which is public. They live in 
 1. Reads the day's live conversations and leaves out test traffic ([`real-asks/read.ts`](real-asks/read.ts)):
    - a company's test mode;
    - companies the backend marks as Agentcard's own, unless listed in `REAL_ASKS_KEEP_COMPANIES`;
-   - any company, client or shopper on the skip lists (the merchant monitors, the load test, the eval suite's client);
-   - any shopper who opened more than 40 conversations that day, which is a monitor or a benchmark;
+   - any company, client or shopper on the skip lists, by exact id: the merchant monitors' shoppers, the load test's and the store sweep's clients, the eval suite's client. An automated caller is named there and never guessed from how much it sends, so a busy shopper is not left out;
    - this repository's own evals. They run with test-mode credentials, so the first rule already leaves them out, and their client's id belongs on `REAL_ASKS_SKIP_CLIENTS`. On top of both, a conversation that opens, word for word, with a message one of the eval files sends is left out whatever company or client it came through ([`real-asks/own-evals.ts`](real-asks/own-evals.ts)). A real shopper who types exactly what an eval sends is left out too, which loses nothing: that ask is already an eval.
 2. Looks for the signs of a bad answer that a fixed rule can read ([`real-asks/signals.ts`](real-asks/signals.ts)):
 
@@ -135,6 +134,7 @@ The asks themselves are never in this repository, which is public. They live in 
    **Which cards the judge reads** is decided in one place, `cardsOf` in [`real-asks/cards.ts`](real-asks/cards.ts). When the backend stored the cards with the turn, the judge reads those, and its verdict can be trusted. The backend is only now starting to store them, and the field's name and shape are not final: the reader looks for a list under the turn's `cards` (or the key named in `REAL_ASKS_CARDS_FIELD`) and treats anything else as "not stored". For a turn without them the job falls back to a guess: the first eight products of the conversation's last search, which may not be the cards the shopper saw. A judge verdict on guessed cards is a hint, not a finding. Each saved row says under `seen.cards_are` which of the two it was.
 4. Removes personal details. Fixed patterns replace links, email addresses, phone and card numbers, order and account ids and street addresses ([`real-asks/scrub.ts`](real-asks/scrub.ts)); the model replaces names and whatever else a pattern cannot know; the patterns then run again over the model's text. A message that needs its link, the shopper's account or a personal detail to make sense is dropped, and so is a yes, a pick or an answer to a question.
 5. Drops an ask the dataset already holds, or one worded almost the same as a kept one, and saves the rest as drafts: at most `REAL_ASKS_MOST_SAVED` (20) a day and `REAL_ASKS_MOST_PER_COMPANY` (5) from one company, the cases with the most signs first. Running the same day twice saves nothing twice.
+6. Posts each saved row to Slack for review, when `SLACK_BOT_TOKEN` and `SLACK_EVALS_CHANNEL` are set ([`real-asks/review-post.ts`](real-asks/review-post.ts)): one short message per row, never repeated. See [Reviewing a row](#reviewing-a-row).
 
 **What a row holds**
 
@@ -143,26 +143,55 @@ The asks themselves are never in this repository, which is public. They live in 
 | `input.messages` | The cleaned messages to send: the ask, and the earlier messages of the chat when the ask depends on them. |
 | `expected.wants` | The requirements, in the shape the judge reads: each thing asked for (`what`) and the facts a product must meet to be it (`must`). |
 | `expected.may_ask`, `expected.priced`, `expected.right_answer` | Whether a question back is a right answer; whether cards carry a price; and what a right answer looks like when it is not simply showing the thing. |
-| `metadata.review` | `draft, not reviewed` when the job saves the row. A person changes it to `reviewed` or `rejected`. |
+| `metadata.review` | `draft, not reviewed` when the job saves the row. A person's thumbs up or thumbs down in Slack changes it to `reviewed` or `rejected`, with who and when under `review_by`, `review_at` and `review_via`. |
+| `metadata.slack` | The channel and timestamp of the row's review post, which is how an emoji on the post is tied back to the row. |
+| `metadata.fix` | The issue that tracks the fix, once the row has its thumbs up. |
 | `metadata.picked_for`, `day`, `kind` | The signs, the day of the conversation, and the kind of thing asked for (retail, groceries, flights and so on). |
 | `metadata.conversation`, `metadata.company` | Hashes of the conversation's and the company's ids. |
-| `metadata.seen` | The cards the shopper was shown, whether they are stored cards or a guess, and the checks the judge failed. |
+| `metadata.seen` | The start of the reply the shopper got, cleaned; the cards they were shown, and whether those are stored cards or a guess; and the checks the judge failed. |
 
-**Reviewing a row.** A row does not run until a person has reviewed it. In Braintrust, open the project "Buy evals", then Datasets, then "Real asks that failed", and open a row whose `metadata.review` reads `draft, not reviewed`.
+#### Reviewing a row
 
-1. Read `input.messages`. Check that no personal detail is left (a name, an address, a phone number, anything that points at one person), and that the last message is a shopping ask that makes sense on its own or with the earlier messages. If either fails, set `metadata.review` to `rejected`.
+A row does not run until a person has reviewed it, and reviewing takes one emoji. Each saved row is posted to the evals channel in Slack as three lines:
+
+```
+🛒 *Shopper:* a yoga mat under $30 that ships to Canada
+🤖 *Agent:* I couldn't find a yoga mat under $30. Want me to look at other stores?
+👍 / 👎
+```
+
+The shopper's message is the cleaned one saved on the row. The reply is its first sentence or two, cleaned the same way: the fixed patterns, then a model for what a pattern cannot know, then the patterns again, and a reply that cannot be cleaned safely is not shown. Raw text is never posted.
+
+| Your emoji on the post | What happens |
+|---|---|
+| 👍 (any skin tone) | The row's `metadata.review` becomes `reviewed`, so it runs as an eval from the next daily run and fails until the fix is live. An issue is opened with the ask, the reply, the cards, the requirements and the command that sends the ask again, and a coding agent starts on it: root cause first, then a fix in the backend for every store, then a pull request. The post gets a reply naming the issue, an hourglass while the agent works and a check when the pull request lands. When the agent finds the answer was fine after all, it says so in the thread and closes the issue. |
+| 👎 | The row's `metadata.review` becomes `rejected` and the post gets a wastebasket. A rejected row never runs, and keeping it stops the same ask from being picked again. |
+
+Only an emoji from a person on the team counts, never a bot's. A decision is final: taking the emoji off later changes nothing. To undo one, change `metadata.review` on the row in Braintrust.
+
+The emoji are read by a small job outside this repository, on the machine that runs Agentcard's other alert handling. It looks only at the messages a row points at through `metadata.slack`, so the run summaries posted to the same channel ([Failed evals in Slack](#failed-evals-in-slack)) are never treated as something to fix.
+
+```bash
+npm run real-asks:post -- --limit 10   # post the ten newest rows that have no post yet
+npm run real-asks:post                 # post every row that has no post yet
+npm run real-asks:post -- --dry-run    # how many it would post
+```
+
+`real-asks:post` is for rows saved before the job posted them itself, or for a day when Slack could not be reached. It needs `BRAINTRUST_API_KEY`, `SLACK_BOT_TOKEN` and `SLACK_EVALS_CHANNEL`. A row saved before replies were kept shows the judge's one-line account of the reply in the reply's place.
+
+A row can still be reviewed by hand in Braintrust (project "Buy evals", Datasets, "Real asks that failed"), which is also where its requirements are corrected:
+
+1. Read `input.messages`. Check that no personal detail is left, and that the last message is a shopping ask that makes sense on its own or with the earlier messages. If either fails, set `metadata.review` to `rejected`.
 2. Read `expected.wants` against the ask. Each `must` has to be something the shopper actually said, stated as one fact a product card (a name, a store and a price) could show or contradict. Remove a requirement the shopper did not state or that no card could ever show, such as "returnable". Add one that is missing. Split one that holds two facts.
 3. Check `expected.may_ask`: `true` when asking the shopper a question first is a right answer, as for food that needs a delivery address.
 4. If the thing asked for cannot exist or cannot be bought, such as a flight in a window where none flies, set `metadata.review` to `rejected`: the eval could never pass.
-5. Otherwise set `metadata.review` to `reviewed` and save. The row runs from the next daily run on.
 
-Setting `rejected` instead of deleting a row keeps the same ask from being picked again.
-
-**Running them.** The real asks run with the daily run and not with the six-hourly one, and only rows marked `reviewed` run, at most `REAL_ASKS_LIMIT` (30 unless set) a run, the newest first. Without `BRAINTRUST_API_KEY`, with an empty dataset, or while no row is reviewed, the eval skips and says why, with the number of drafts waiting. `REAL_ASKS_RUN_DRAFTS=1` also runs the drafts, for a run made on purpose by hand. In Slack a real ask that fails shows its row id and the names of the failed checks only; the ask and the answer are in Braintrust.
+**Running them.** The real asks run with the daily run and not with the six-hourly one, and only rows marked `reviewed` run, at most `REAL_ASKS_LIMIT` (30 unless set) a run, the newest first. Without `BRAINTRUST_API_KEY`, with an empty dataset, or while no row is reviewed, the eval skips and says why, with the number of drafts waiting. `REAL_ASKS_RUN_DRAFTS=1` also runs the drafts, for a run made on purpose by hand, and `REAL_ASKS_ONLY=<row id>` runs one row alone (several ids, separated by commas), whatever its review short of rejected. In Slack a real ask that fails shows its row id and the names of the failed checks only; the ask and the answer are in Braintrust.
 
 ```bash
 npm run eval -- --tag real                            # the reviewed rows
 REAL_ASKS_RUN_DRAFTS=1 npm run eval -- --tag real     # the drafts too
+REAL_ASKS_ONLY=real-0123456789abcdef npx eve eval buy/real --verbose   # one row, with its cards and replies
 npm test                                              # the cleaning patterns, the rules and the row reader, on made-up messages
 ```
 
@@ -175,7 +204,7 @@ npm run real-asks -- --day 2026-11-24              # one day
 npm run real-asks -- --day 2026-11-24 --dry-run    # the day's numbers, saving nothing
 ```
 
-It needs Node 24. It prints numbers only, never a shopper's words, and ends with one line: `real-asks ok: day=... conversations=... read=... asks=... prepared=... picked=... saved=... rows_in_dataset=...` and exit code 0, or `real-asks failed: ...` with the reason and the same numbers, and exit code 1 when the run broke part way or 2 when a setting is missing.
+It needs Node 24. It prints numbers only, never a shopper's words, and ends with one line: `real-asks ok: day=... conversations=... read=... asks=... prepared=... picked=... saved=... rows_in_dataset=... posted_for_review=...` and exit code 0, or `real-asks failed: ...` with the reason and the same numbers, and exit code 1 when the run broke part way or 2 when a setting is missing.
 
 | Variable | Needed | What it is |
 |---|---|---|
@@ -184,9 +213,9 @@ It needs Node 24. It prints numbers only, never a shopper's words, and ends with
 | `REAL_ASKS_DATABASE_CA` | recommended | The path of the certificate authority file for the database (for Amazon RDS, its `global-bundle.pem`). With it the database's certificate is checked; without it the link is encrypted but the certificate is not checked. |
 | `ANTHROPIC_API_KEY` | yes | For the model that cleans the asks and for the judge. |
 | `BRAINTRUST_API_KEY` | yes, except with `--dry-run` | To read and save the dataset. |
-| `REAL_ASKS_SKIP_COMPANIES`, `REAL_ASKS_SKIP_CLIENTS`, `REAL_ASKS_SKIP_SHOPPERS` | recommended | Ids of test traffic to leave out, separated by commas: the merchant monitors' shoppers, the load test's and the store sweep's clients, the eval suite's client. |
+| `SLACK_BOT_TOKEN`, `SLACK_EVALS_CHANNEL` | recommended | The bot and the channel each saved row is posted to for review. Without them the rows are saved and not posted; `npm run real-asks:post` posts them later. |
+| `REAL_ASKS_SKIP_COMPANIES`, `REAL_ASKS_SKIP_CLIENTS`, `REAL_ASKS_SKIP_SHOPPERS` | yes, in production | The exact ids of automated callers to leave out, separated by commas: the merchant monitors' shoppers (the backend's `MERCHANT_MONITOR_USER_IDS` setting), the load test's and the store sweep's clients, the eval suite's client. These lists are the only thing that keeps automated callers out of a live company's traffic, so keep them current. The ids are never written in this repository. |
 | `REAL_ASKS_KEEP_COMPANIES` | no | Ids of companies to read even when the backend marks them as Agentcard's own. |
-| `REAL_ASKS_MOST_PER_SHOPPER` | no | Conversations in a day above which a shopper counts as a machine. 40 unless set. |
 | `REAL_ASKS_MOST_JUDGED`, `REAL_ASKS_MOST_SAVED`, `REAL_ASKS_MOST_PER_COMPANY` | no | The day's caps: 150 asks judged, 20 rows saved, 5 from one company. |
 | `REAL_ASKS_CARDS_FIELD` | no | The key under a stored turn that holds its cards, if the backend names it something other than `cards`. |
 

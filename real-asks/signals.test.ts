@@ -11,7 +11,7 @@ const conversation = (id: string, productsFor: string | null = null, products: D
 
 const day: Day = {
   day: "2026-01-01",
-  counts: { all: 5, testMode: 0, ownCompany: 0, skippedCompany: 0, skippedClient: 0, skippedShopper: 0, machine: 0, read: 5 },
+  counts: { all: 5, testMode: 0, ownCompany: 0, skippedCompany: 0, skippedClient: 0, skippedShopper: 0, read: 5 },
   checkouts: [],
   conversations: [conversation("found", "f1", [{ name: "Yoga mat", store: "Amazon", price: "$20.00" }]), conversation("again"), conversation("wrong"), conversation("empty"), conversation("silent")],
   messages: [
