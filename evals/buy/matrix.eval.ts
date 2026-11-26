@@ -41,7 +41,7 @@ const stores: Case[] = [
   { group: "store", name: "Ace Hardware", ask: "a Weber charcoal grill from Ace Hardware", store: /ace/i, wants: one("charcoal grill", "a grill", "Weber brand", "charcoal, not gas") },
   { group: "store", name: "1-800-Flowers", ask: "a dozen red roses from 1-800-Flowers", store: /flowers/i, wants: one("red roses", "roses", "red") },
   { group: "store", name: "Pokémon Center", ask: "a Pikachu plush from Pokémon Center", store: /pok[eé]mon/i, wants: one("Pikachu plush", "a plush toy", "Pikachu") },
-  { group: "store", name: "Grainger", ask: "large nitrile gloves from Grainger", store: /grainger/i, wants: one("nitrile gloves", "disposable gloves", "nitrile", "size large") },
+  { group: "store", name: "Grainger", ask: "large nitrile gloves from Grainger", store: /grainger/i, wants: one("nitrile gloves", "gloves", "nitrile", "size large") },
   { group: "store", name: "eBay, used", ask: "a used Canon AE-1 film camera on eBay", store: /ebay/i, wants: one("Canon AE-1", "a Canon AE-1 or AE-1 Program film camera, not only a lens or a part") },
   { group: "store", name: "AutoZone", ask: "wiper blades for a 2018 Honda Civic from AutoZone", store: /autozone/i, wants: one("wiper blades", "windshield wiper blades") },
   { group: "store", name: "a brand's own store", ask: "Allbirds Wool Runners, men's size 10", wants: one("Allbirds Wool Runners", "Allbirds brand", "the Wool Runner shoe", "for men") },

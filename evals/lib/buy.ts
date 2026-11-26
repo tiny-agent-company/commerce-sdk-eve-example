@@ -216,29 +216,37 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
     // Cards from another store are a right answer only when the reply says first that the named store had nothing,
     // could not be searched or cannot be shopped at. Shown without that, they pass for the named store's.
     const others = cards.filter((card) => !expected.store!.test(card.store ?? ""));
-    t.score(verdict.then((v) => ({ score: others.length === 0 || v.saysNamedStoreMissed ? 1 : 0, message: others.length === 0 ? "every card comes from the store the shopper named" : `${v.saysNamedStoreMissed ? "the reply says first that the named store missed; " : "the reply does not say the named store missed; "}cards from other stores: ${others.map(line).join("; ")}` })))
+    const stores = [...new Set(others.map((card) => card.store ?? "an unnamed store"))].join(", ");
+    t.score(verdict.then((v) => ({ score: others.length === 0 || v.saysNamedStoreMissed ? 1 : 0, message: others.length === 0 ? "Every card comes from the store the shopper named." : `${others.length} of ${cards.length} cards come from other stores (${stores}), and no reply says first that the named store had none.` })))
       .label("named-store")
       .gate(1);
   }
-  const wrong = (v: Verdict) => v.cards.filter((card) => !card.accurate).map((card) => `card ${card.index + 1} "${cards[card.index]?.name.slice(0, 70)}" ${card.unmet.length ? `does not meet: ${card.unmet.map((must) => `"${must}"`).join(", ")}` : "is not something that was asked for"}`);
+  /** Each card that is not what was asked for, one per line, with the requirements it breaks. */
+  const wrong = (v: Verdict) => v.cards.filter((card) => !card.accurate).map((card) => `card ${card.index + 1}, "${cards[card.index]?.name.slice(0, 80)}": ${card.unmet.length ? `not ${card.unmet.join(", not ")}` : "not something that was asked for"}`);
   if (cards.length > 0 && !expected.nothingToFind) {
-    t.score(verdict.then((v) => ({ score: v.cards.filter((card) => card.accurate).length / cards.length, message: wrong(v).join("; ") || "every card is what was asked for" })))
+    t.score(verdict.then((v) => {
+      const bad = wrong(v);
+      return { score: (cards.length - bad.length) / cards.length, message: bad.length ? `${bad.length} of ${cards.length} cards are not what was asked for:\n${bad.map((one) => `   ◦ ${one}`).join("\n")}` : "Every card is what was asked for." };
+    }))
       .label("accurate-cards")
       .gate(0.8);
-    t.score(verdict.then((v) => ({ score: v.cards.slice(0, 3).every((card) => card.accurate) ? 1 : 0, message: wrong({ ...v, cards: v.cards.slice(0, 3) }).join("; ") || "the first three cards are what was asked for" })))
+    t.score(verdict.then((v) => {
+      const top = wrong({ ...v, cards: v.cards.slice(0, 3) });
+      return { score: top.length === 0 ? 1 : 0, message: top.length ? `The first three cards should all be what was asked for, and ${top.length} ${top.length === 1 ? "is" : "are"} not:\n${top.map((one) => `   ◦ ${one}`).join("\n")}` : "The first three cards are what was asked for." };
+    }))
       .label("top-cards-accurate")
       .gate(1);
-    t.score(verdict.then((v) => ({ score: v.uncovered.length === 0 ? 1 : 0, message: v.uncovered.length ? `no card is: ${v.uncovered.join(", ")}` : "every item asked for has a card" })))
+    t.score(verdict.then((v) => ({ score: v.uncovered.length === 0 ? 1 : 0, message: v.uncovered.length ? `No card is ${v.uncovered.map((what) => `a ${what}`).join(" or ")}.` : "Every item asked for has a card." })))
       .label("every-item-covered")
       .gate(1);
-    t.score(verdict.then((v) => ({ score: v.badRecommendations.length === 0 ? 1 : 0, message: v.badRecommendations.join("; ") || "every recommended product is what was asked for" })))
+    t.score(verdict.then((v) => ({ score: v.badRecommendations.length === 0 ? 1 : 0, message: v.badRecommendations.length ? `A reply recommends something that is not what was asked for:\n${v.badRecommendations.map((one) => `   ◦ ${one}`).join("\n")}` : "Every recommended product is what was asked for." })))
       .label("recommended-fits")
       .gate(1);
   }
-  t.score(verdict.then((v) => ({ score: v.agentcardFalseClaims.length === 0 ? 1 : 0, message: v.agentcardFalseClaims.join("; ") || "nothing in Agentcard's reply contradicts the cards" })))
+  t.score(verdict.then((v) => ({ score: v.agentcardFalseClaims.length === 0 ? 1 : 0, message: v.agentcardFalseClaims.length ? `Agentcard's reply says something the cards contradict:\n${v.agentcardFalseClaims.map((one) => `   ◦ ${one}`).join("\n")}` : "Nothing in Agentcard's reply contradicts the cards." })))
     .label("agentcard-reply-true")
     .gate(1);
-  t.score(verdict.then((v) => ({ score: v.agentFalseClaims.length === 0 ? 1 : 0, message: v.agentFalseClaims.join("; ") || "nothing in the agent's reply contradicts the cards" })))
+  t.score(verdict.then((v) => ({ score: v.agentFalseClaims.length === 0 ? 1 : 0, message: v.agentFalseClaims.length ? `The agent's reply says something the cards contradict:\n${v.agentFalseClaims.map((one) => `   ◦ ${one}`).join("\n")}` : "Nothing in the agent's reply contradicts the cards." })))
     .label("agent-reply-true")
     .gate(1);
   t.score(verdict.then((v) => ({ score: v.answersTheAsk || (asked && cards.length === 0) ? 1 : 0, message: asked && cards.length === 0 ? "the reply asks the shopper a question, which is never a failure" : v.answerNote })))

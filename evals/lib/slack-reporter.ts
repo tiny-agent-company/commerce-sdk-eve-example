@@ -88,7 +88,7 @@ export function slackReporter(): EvalReporter {
         for (const message of opener ? rest : failure.messages) {
           await post(token, { channel, thread_ts: thread, text: quoted(message.role === "user" ? "Message sent to the agent:" : "Agent's reply:", message.text) });
         }
-        const reasons = failure.reasons.map((reason) => `• ${plain(reason.slice(0, 700))}`).join("\n");
+        const reasons = failure.reasons.map((reason) => `• ${plain(reason.slice(0, 1200))}`).join("\n");
         await post(token, { channel, thread_ts: thread, text: `*Why the eval failed:*\n${reasons}`.slice(0, 3500) });
       }
     },
