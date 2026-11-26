@@ -1,41 +1,38 @@
-import { generateText, Output } from "ai";
 import type { EveEvalContext, EveEvalTurn } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
-import { anthropic } from "eve/models/anthropic";
-import { z } from "zod";
+import { judge, type Verdict, type Want } from "./judge.js";
 
-/** A product as the buy tool hands it to the model: no links, the price as the shopper reads it. */
-export interface BuyProduct {
-  product_id: string | null;
+/** A product card as the shopper sees it in the chat. */
+export interface Card {
+  id: string | null;
   name: string;
-  store: string;
+  store: string | null;
   price: string | null;
-  link_sent: boolean;
 }
 
-/** The part of the buy tool's answer these evals grade. */
+/** The part of the buy tool's answer these evals read. */
 export interface BuyAnswer {
   status: string;
+  /** Agentcard's reply, as the model reads it. */
   reply: string;
-  products: BuyProduct[];
+  products: { product_id: string | null; name: string; store: string; price: string | null }[];
   cart: { store: string; items: { name: string; qty: number }[]; total: string } | null;
-  product_links_sent: number;
 }
 
-/** What one search case expects of the answer. */
-export interface SearchExpectation {
-  /** What the shopper types. */
+/** What one shopper message expects of the answer. */
+export interface Expectation {
+  /** What the shopper typed, with the earlier messages of the chat when they matter. */
   ask: string;
-  /** Words that say a product is the kind the shopper asked for. */
-  match?: RegExp;
-  /** The store the shopper named: every product must come from it. */
+  /** Each thing the shopper asked for, and what must be true of a product for it to be that thing. */
+  wants: Want[];
+  /** The store the shopper named: every card must come from it. */
   store?: RegExp;
-  /** The most a product may cost, in dollars. */
+  /** The most a card may cost, in dollars. */
   maxPrice?: number;
-  /** The least a product may cost, in dollars. */
+  /** The least a card may cost, in dollars. */
   minPrice?: number;
-  /** The fewest products the answer must show. Defaults to 1; 0 for an ask the tool answers with a question. */
-  minProducts?: number;
+  /** True when a question back to the shopper is a right answer, as for food that needs an address first. */
+  mayAsk?: boolean;
 }
 
 /** Every call of the buy tool in a turn. */
@@ -54,138 +51,146 @@ export function lastAnswer(turn: EveEvalTurn): BuyAnswer | null {
   }
 }
 
+/**
+ * Every product card the turn put in the chat, in the order it arrived, each once. The cards are read from what the
+ * tool streamed to the chat, which is what the shopper sees. The list the model reads (`products`) can hold only the
+ * last of several searches, so it is used only to fill in a card the stream did not carry.
+ */
+export function cardsShown(turn: EveEvalTurn): Card[] {
+  const cards = new Map<string, Card>();
+  const add = (card: Card) => {
+    const key = card.id ?? `${card.name}|${card.store}`;
+    if (!cards.has(key)) cards.set(key, card);
+  };
+  for (const event of turn.events) {
+    if (event.type !== "call.progress") continue;
+    const output = (event.data as { output?: unknown }).output;
+    if (!output || typeof output !== "object") continue;
+    for (const link of (output as { links?: Record<string, unknown>[] }).links ?? []) {
+      if (link.kind !== "product" || typeof link.title !== "string") continue;
+      add({ id: (link.productId as string) ?? null, name: link.title, store: (link.store as string) ?? null, price: (link.price as string) ?? null });
+    }
+  }
+  for (const product of lastAnswer(turn)?.products ?? []) add({ id: product.product_id, name: product.name, store: product.store, price: product.price });
+  return [...cards.values()];
+}
+
+/** The products a turn's searches found past the cards they showed, which the replies may still mention. */
+export function cardsNotShown(turn: EveEvalTurn): Card[] {
+  let more: Card[] = [];
+  for (const event of turn.events) {
+    if (event.type !== "call.progress") continue;
+    const output = (event.data as { output?: unknown }).output;
+    if (!output || typeof output !== "object") continue;
+    const links = (output as { more?: Record<string, unknown>[] }).more ?? [];
+    if (links.length > 0) more = links.map((link) => ({ id: (link.productId as string) ?? null, name: String(link.title ?? ""), store: (link.store as string) ?? null, price: (link.price as string) ?? null }));
+  }
+  return more;
+}
+
 /** A price such as `$12.99` or `from $1,069.00` in dollars, or null when there is none. */
 export function dollars(price: string | null): number | null {
   const found = price?.replace(/,/g, "").match(/\d+(\.\d+)?/);
   return found ? Number(found[0]) : null;
 }
 
-/** The share of `items` that pass `test`, from 0 to 1; 1 for an empty list. */
-function share<T>(items: readonly T[], test: (item: T) => boolean): number {
-  return items.length === 0 ? 1 : items.filter(test).length / items.length;
-}
+const line = (card: Card) => `${card.name.slice(0, 90)} (${card.store ?? "no store"}, ${card.price ?? "no price"})`;
 
 /**
- * The checks every shopping turn must pass, whatever the shopper asked: the buy tool ran and did not fail, it placed
- * no order, and the agent's own reply is one short line with no link in it.
+ * The checks every turn must pass, whatever the shopper asked: nothing failed, no order was placed or started, and the
+ * agent's reply has no link in it.
  */
-export function checkTurn(t: EveEvalContext, turn: EveEvalTurn): BuyAnswer | null {
-  turn.calledTool("buy");
+export function checkTurn(t: EveEvalContext, turn: EveEvalTurn): void {
   turn.noFailedCalls();
   t.check(
     buyCalls(turn),
     satisfies((calls: ReturnType<typeof buyCalls>) => calls.every((call) => call.input.confirm === false), "no call confirms an order"),
   ).label("no-order-without-yes");
-
   const reply = turn.reply ?? "";
   t.check(reply, satisfies((text: string) => text.trim().length > 0, "the agent replies")).label("agent-replies");
   t.check(reply, satisfies((text: string) => !/https?:\/\/|www\./i.test(text), "the agent's reply has no link")).label("no-link-in-reply");
-  t.check(reply, satisfies((text: string) => text.length <= 400, "the agent's reply is short")).label("short-reply").soft(1);
-
   const answer = lastAnswer(turn);
-  t.check(answer, satisfies((value: BuyAnswer | null) => value !== null, "the buy tool returned an answer")).label("buy-answered");
-  if (!answer) return null;
-
+  if (!answer) return;
   t.check(
     answer.status,
-    satisfies((status: string) => status !== "declined", `Agentcard did not refuse (reply: ${answer.reply.slice(0, 200)})`),
+    satisfies((status: string) => status !== "declined", `Agentcard did not refuse (it said: ${answer.reply.slice(0, 200)})`),
   ).label("not-declined");
   t.check(
     answer.status,
     satisfies((status: string) => !["placing", "order_placed", "approval_sent"].includes(status), "no order was started"),
   ).label("no-order-started");
-  return answer;
 }
-
-/** Grades the products a search turn showed against what the case expects. */
-export function checkSearch(t: EveEvalContext, turn: EveEvalTurn, expected: SearchExpectation): BuyAnswer | null {
-  const answer = checkTurn(t, turn);
-  if (!answer) return null;
-  const { products } = answer;
-  const names = products.map((product) => `${product.name} (${product.store}, ${product.price ?? "no price"})`).join("; ");
-  t.log(`status ${answer.status}, ${products.length} products: ${names}`);
-  t.log(`Agentcard's reply: ${answer.reply}`);
-
-  const least = expected.minProducts ?? 1;
-  t.check(products, satisfies((list: BuyProduct[]) => list.length >= least, `shows at least ${least} product(s)`)).label("has-products");
-  t.check(
-    products,
-    satisfies((list: BuyProduct[]) => list.every((product) => product.name && product.store && dollars(product.price) !== null), "every product has a name, a store and a price"),
-  ).label("complete-cards");
-  t.check(
-    products,
-    satisfies((list: BuyProduct[]) => list.every((product) => product.link_sent), "every product's card reached the chat"),
-  ).label("cards-sent");
-  t.check(
-    products,
-    satisfies((list: BuyProduct[]) => new Set(list.map((product) => product.product_id ?? product.name)).size === list.length, "no product is shown twice"),
-  ).label("no-duplicates");
-
-  if (expected.store) {
-    const store = expected.store;
-    t.check(
-      products,
-      satisfies((list: BuyProduct[]) => list.every((product) => store.test(product.store)), `every product comes from the store the shopper named (${names})`),
-    ).label("named-store");
-  }
-  if (expected.maxPrice !== undefined) {
-    const most = expected.maxPrice;
-    t.check(
-      products,
-      satisfies((list: BuyProduct[]) => list.every((product) => (dollars(product.price) ?? 0) <= most), `no product costs more than $${most} (${names})`),
-    ).label("within-budget");
-  }
-  if (expected.minPrice !== undefined) {
-    const floor = expected.minPrice;
-    t.check(
-      products,
-      satisfies((list: BuyProduct[]) => list.every((product) => (dollars(product.price) ?? floor) >= floor), `no product costs less than $${floor} (${names})`),
-    ).label("above-floor");
-  }
-  if (expected.match && products.length > 0) {
-    const match = expected.match;
-    t.score({
-      score: share(products, (product) => match.test(product.name)),
-      message: `products that are the kind asked for: ${names}`,
-    })
-      .label("on-topic")
-      .gate(0.6);
-  }
-  if (products.length > 0) {
-    const grade = gradeProducts(expected.ask, answer);
-    t.score(grade.then(({ fitting, reason }) => ({ score: fitting / products.length, message: `${fitting} of ${products.length} products fit: ${reason}` })))
-      .label("fits-the-ask")
-      .atLeast(0.7);
-    t.score(grade.then(({ reply_true, reason }) => ({ score: reply_true ? 1 : 0, message: `Agentcard wrote "${answer.reply.slice(0, 200)}": ${reason}` })))
-      .label("reply-is-true")
-      .atLeast(1);
-  }
-  return answer;
-}
-
-const Grade = z.object({
-  fitting: z.number().int().describe("How many of the products are something the shopper could reasonably want for this ask."),
-  reply_true: z.boolean().describe("False only when the reply says something clearly untrue about the products shown."),
-  reason: z.string().describe("One sentence naming the products that do not fit and anything untrue in the reply, or `all good`."),
-});
 
 /**
- * A model's reading of an answer against the shopper's words: how many of the products fit, and whether Agentcard's
- * reply beside them is true. Uses the same Anthropic key as the agent, on a smaller model.
+ * Grades one answer against what the shopper asked for.
+ *
+ * Fixed rules cover what a rule can know exactly: the cards are complete, none repeats, each comes from the named
+ * store and sits inside the budget. A judge model then reads every card against every requirement of the ask, and
+ * both replies against the cards (judge.ts), and the eval fails when:
+ * - fewer than 80% of the cards are what was asked for (`accurate-cards`),
+ * - one of the first three cards is not (`top-cards-accurate`),
+ * - something the shopper asked for has no card that is it (`every-item-covered`),
+ * - a product a reply recommends is not what was asked for (`recommended-fits`),
+ * - Agentcard's reply says something the cards contradict (`agentcard-reply-true`),
+ * - the chat agent's own reply does (`agent-reply-true`),
+ * - the replies do not respond to what was asked (`answers-the-ask`).
+ *
+ * `earlier` holds the cards of the chat's earlier turns: a follow-up the agent answers from cards already in the chat
+ * is graded on those.
  */
-export async function gradeProducts(ask: string, answer: BuyAnswer) {
-  const { output } = await generateText({
-    model: anthropic("claude-haiku-5-5"),
-    output: Output.object({ schema: Grade }),
-    prompt: [
-      "You grade a shopping assistant. A shopper typed an ask, and the assistant showed product cards and wrote a reply.",
-      "Count a product as fitting when it is the kind of thing asked for and breaks nothing the shopper said: the brand, the model, the store, the budget, the size, the colour, a spec they named.",
-      "A different pack size, colour or brand the shopper did not rule out still fits. An accessory for the thing asked for does not, and neither does the same thing for a different model.",
-      "The reply is untrue only when it states something clearly wrong about the cards: a wrong price, a product that is not shown, or that the products fit the ask when most do not. Do not judge its tone, its length, its opinions such as `best value`, or how many questions it asks.",
-      `Shopper's ask: ${ask}`,
-      `Products shown: ${JSON.stringify(answer.products.map(({ name, store, price }) => ({ name, store, price })))}`,
-      `Assistant's reply: ${answer.reply}`,
-    ].join("\n\n"),
-  });
-  return { ...output, fitting: Math.min(Math.max(output.fitting, 0), answer.products.length) };
+export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected: Expectation, earlier: Card[] = []): Promise<Card[]> {
+  checkTurn(t, turn);
+  const answer = lastAnswer(turn);
+  const fresh = cardsShown(turn);
+  const cards = fresh.length > 0 ? fresh : earlier;
+  const replies = { agentcard: answer?.reply ?? "", agent: turn.reply ?? "" };
+  t.log(`${fresh.length} new cards${fresh.length === 0 && earlier.length > 0 ? ` (answered from ${earlier.length} earlier ones)` : ""}`);
+  cards.forEach((card, index) => t.log(`card ${index + 1}: ${line(card)}`));
+  t.log(`Agentcard's reply: ${replies.agentcard}`);
+  t.log(`The agent's reply: ${replies.agent}`);
+
+  if (!expected.mayAsk) t.check(cards, satisfies((list: Card[]) => list.length > 0, "the shopper is shown at least one product")).label("has-cards");
+  if (cards.length > 0) {
+    const missing = cards.filter((card) => !card.name || !card.store || dollars(card.price) === null);
+    t.check(missing, satisfies((list: Card[]) => list.length === 0, `every card has a name, a store and a price (missing on: ${missing.map(line).join("; ")})`)).label("complete-cards");
+    if (expected.store) {
+      const others = cards.filter((card) => !expected.store!.test(card.store ?? ""));
+      t.check(others, satisfies((list: Card[]) => list.length === 0, `every card comes from the store the shopper named (others: ${others.map(line).join("; ")})`)).label("named-store");
+    }
+    if (expected.maxPrice !== undefined || expected.minPrice !== undefined) {
+      const [floor, most] = [expected.minPrice ?? 0, expected.maxPrice ?? Infinity];
+      const outside = cards.filter((card) => {
+        const price = dollars(card.price);
+        return price !== null && (price < floor || price > most);
+      });
+      t.check(outside, satisfies((list: Card[]) => list.length === 0, `every card is inside the budget (outside: ${outside.map(line).join("; ")})`)).label("within-budget");
+    }
+  }
+
+  const verdict = judge(expected, cards, replies, cardsNotShown(turn));
+  const wrong = (v: Verdict) => v.cards.filter((card) => !card.accurate).map((card) => `card ${card.index + 1} ${cards[card.index]?.name.slice(0, 60)}: ${card.unmet.join(", ") || "not something that was asked for"}`);
+  if (cards.length > 0) {
+    t.score(verdict.then((v) => ({ score: v.cards.filter((card) => card.accurate).length / cards.length, message: wrong(v).join("; ") || "every card is what was asked for" })))
+      .label("accurate-cards")
+      .gate(0.8);
+    t.score(verdict.then((v) => ({ score: v.cards.slice(0, 3).every((card) => card.accurate) ? 1 : 0, message: wrong({ ...v, cards: v.cards.slice(0, 3) }).join("; ") || "the first three cards are what was asked for" })))
+      .label("top-cards-accurate")
+      .gate(1);
+    t.score(verdict.then((v) => ({ score: v.uncovered.length === 0 ? 1 : 0, message: v.uncovered.length ? `no card is: ${v.uncovered.join(", ")}` : "every item asked for has a card" })))
+      .label("every-item-covered")
+      .gate(1);
+    t.score(verdict.then((v) => ({ score: v.badRecommendations.length === 0 ? 1 : 0, message: v.badRecommendations.join("; ") || "every recommended product is what was asked for" })))
+      .label("recommended-fits")
+      .gate(1);
+  }
+  t.score(verdict.then((v) => ({ score: v.agentcardFalseClaims.length === 0 ? 1 : 0, message: v.agentcardFalseClaims.join("; ") || "nothing in Agentcard's reply contradicts the cards" })))
+    .label("agentcard-reply-true")
+    .gate(1);
+  t.score(verdict.then((v) => ({ score: v.agentFalseClaims.length === 0 ? 1 : 0, message: v.agentFalseClaims.join("; ") || "nothing in the agent's reply contradicts the cards" })))
+    .label("agent-reply-true")
+    .gate(1);
+  t.score(verdict.then((v) => ({ score: v.answersTheAsk ? 1 : 0, message: v.answerNote })))
+    .label("answers-the-ask")
+    .gate(1);
+  return cards;
 }

@@ -54,12 +54,32 @@ npm run eval -- --verbose    # also print the products and Agentcard's reply for
 
 | File | What it covers |
 |---|---|
-| [`evals/buy/search.eval.ts`](evals/buy/search.eval.ts) | One message each: a plain product, a brand and model, a named store, a budget, a price range, a quantity, a size and colour, specs, a typo, a vague gift, Spanish, a chatty ask, two products at once, groceries and restaurant food. To add a case, add a line to the list. |
-| [`evals/buy/conversation.eval.ts`](evals/buy/conversation.eval.ts) | Several messages: narrowing a search, switching to another product, picking a product, and a greeting that should start no search. |
-| [`evals/lib/buy.ts`](evals/lib/buy.ts) | The checks themselves. |
+| [`evals/buy/search.eval.ts`](evals/buy/search.eval.ts) | One message each: a plain product, a brand and model, an exact product, a named store, a budget, a price range, a quantity, a size and colour, specs, a part that must fit a model, things to leave out, a use with no product named, a typo, a vague gift, Spanish, a chatty ask, two products at once, groceries and restaurant food. To add a case, add a line to the list. |
+| [`evals/buy/conversation.eval.ts`](evals/buy/conversation.eval.ts) | Several messages: narrowing a search, switching to another product, picking a product, and a greeting. |
+| [`evals/judge/calibration.eval.ts`](evals/judge/calibration.eval.ts) | Checks the judge itself with made-up answers whose faults are known. |
+| [`evals/lib/buy.ts`](evals/lib/buy.ts) | Reads the cards the shopper saw and runs the checks. |
+| [`evals/lib/judge.ts`](evals/lib/judge.ts) | The judge: a model that reads every card against every requirement of the ask. |
 | [`evals/lib/slack-reporter.ts`](evals/lib/slack-reporter.ts) | Posts the evals that did not pass to Slack. |
 
-Each search is checked two ways. Fixed rules fail the eval outright: the buy tool ran without an error, the answer has products, every product has a name, a store and a price, none is shown twice, each comes from the store the shopper named, none is over the budget, most are the kind of thing asked for, and the agent's reply has no link in it. Then a second model (`claude-haiku-5-5`, on the same Anthropic key) reads the ask beside the products and scores two things: how many products fit what the shopper said (`fits-the-ask`, at least 70%), and whether the reply says anything untrue about them (`reply-is-true`). A low score marks the eval as scored low rather than failed; `--strict` makes it count as a failure.
+### How an answer is graded
+
+Every case spells out what the shopper asked for as a list of requirements, one fact each. "A screen protector for an iPhone 16" is two: it is a screen protector, and it is made for the iPhone 16 and not only for the Plus, Pro or Pro Max. The answer is graded on the product cards the shopper actually saw in the chat, not on the shorter list the model reads.
+
+Fixed rules check what a rule can know exactly: the buy tool did not fail, no order was placed or started, every card has a name, a store and a price, every card comes from the store the shopper named, every card is inside the budget, and the agent's reply has no link.
+
+A judge model (`claude-opus-5-5`, on the same Anthropic key) then reads every card against every requirement, and both replies against the cards. An eval fails when:
+
+| Check | Fails when |
+|---|---|
+| `accurate-cards` | Fewer than 80% of the cards are what was asked for. |
+| `top-cards-accurate` | One of the first three cards is not. |
+| `every-item-covered` | Something the shopper asked for has no card that is it. |
+| `recommended-fits` | A reply recommends a product that is not what was asked for, or that is on no card. |
+| `agentcard-reply-true` | Agentcard's reply says something the cards contradict, such as a wrong price. |
+| `agent-reply-true` | The chat agent's own one-line reply does. |
+| `answers-the-ask` | The replies ignore part of the ask, or present something else as if it were it. |
+
+The judge counts only what a card states. A shoe whose name gives no size does not break "size 10", and words of taste such as "nothing fancy" break nothing. A follow-up message may be answered from cards already in the chat, and is then graded on those.
 
 ### Failed evals in Slack
 
