@@ -119,7 +119,13 @@ Every rule is fixed; no judge model reads a cart. A store that is down, a suppli
 
 ### Failed evals in Slack
 
-Set `SLACK_BOT_TOKEN` (a bot that can post to the channel) and `SLACK_EVALS_CHANNEL` (the channel's id). A run where an eval did not pass posts one message, with a reply under it for each eval: what the shopper typed, the agent's reply, and each check that failed with the products it saw. A run where everything passes posts nothing. A long run details its first 25 evals and names the rest in one reply.
+Set `SLACK_BOT_TOKEN` (a bot that can post to the channel) and `SLACK_EVALS_CHANNEL` (the channel's id). Each eval that did not pass is posted as its conversation, word for word:
+
+- the post is the first message sent to the agent, under "Message sent to the agent:";
+- its thread holds the agent's reply, under "Agent's reply:", then each next message and reply;
+- the last reply in the thread is "Why the eval failed:", one line per failed check.
+
+A run where everything passes posts nothing. A run posts at most 25 evals; Braintrust holds every one.
 
 ### Results in Braintrust
 

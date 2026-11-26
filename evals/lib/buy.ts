@@ -220,7 +220,7 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
       .label("named-store")
       .gate(1);
   }
-  const wrong = (v: Verdict) => v.cards.filter((card) => !card.accurate).map((card) => `card ${card.index + 1} ${cards[card.index]?.name.slice(0, 60)}: ${card.unmet.join(", ") || "not something that was asked for"}`);
+  const wrong = (v: Verdict) => v.cards.filter((card) => !card.accurate).map((card) => `card ${card.index + 1} "${cards[card.index]?.name.slice(0, 70)}" ${card.unmet.length ? `does not meet: ${card.unmet.map((must) => `"${must}"`).join(", ")}` : "is not something that was asked for"}`);
   if (cards.length > 0 && !expected.nothingToFind) {
     t.score(verdict.then((v) => ({ score: v.cards.filter((card) => card.accurate).length / cards.length, message: wrong(v).join("; ") || "every card is what was asked for" })))
       .label("accurate-cards")

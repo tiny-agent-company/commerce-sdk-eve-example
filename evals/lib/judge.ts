@@ -25,7 +25,7 @@ export interface Verdict {
   /** True when the replies respond to what was asked: they offer it, ask for what is needed to get it, or say plainly it was not found. */
   answersTheAsk: boolean;
   answerNote: string;
-  /** True when Agentcard's reply says, before it offers anything else, that a store the shopper named had nothing, could not be searched or cannot be shopped at. */
+  /** True when either reply says, before it offers anything else, that a store the shopper named had nothing, could not be searched or cannot be shopped at. */
   saysNamedStoreMissed: boolean;
 }
 
@@ -41,7 +41,7 @@ const Reading = z.object({
   recommended_not_shown: z.array(z.string()).describe("Products either reply recommends by name that are on no card."),
   false_claims: z.array(z.object({ reply: z.enum(["agentcard", "agent"]), claim: z.string().describe("The statement, quoted, with the fact that contradicts it.") })).describe("Each statement in a reply that the cards contradict."),
   answers_the_ask: z.boolean(),
-  says_named_store_missed: z.boolean().describe("True only when Agentcard's reply says plainly, before it offers anything else, that a store the shopper named had nothing for this, could not be searched, or cannot be shopped at. False when the shopper named no store, or the reply offers other stores without saying so first."),
+  says_named_store_missed: z.boolean().describe("True only when Agentcard's reply or the chat agent's reply says plainly, before it offers anything else, that a store the shopper named had nothing for this, could not be searched, or cannot be shopped at. False when the shopper named no store, or the reply offers other stores without saying so first."),
   answer_note: z.string().describe("One sentence on why the replies do or do not respond to the ask."),
 });
 
