@@ -1,12 +1,19 @@
 name: Buy evals
 
-# Runs the evals in evals/ against the live buy tool four times a day, and on demand from the Actions tab.
+# Runs the evals in evals/ against the live buy tool, and on demand from the Actions tab: the core set (searches,
+# conversations and the judge's own test) every six hours, and everything, with the coverage matrix, once a day.
 # An eval that does not pass is posted to Slack by evals/lib/slack-reporter.ts, so this job turns red only
 # when the run itself breaks.
 on:
   schedule:
     - cron: "17 */6 * * *"
+    - cron: "47 13 * * *"
   workflow_dispatch:
+    inputs:
+      everything:
+        description: Also run the coverage matrix
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -18,7 +25,7 @@ concurrency:
 jobs:
   evals:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,4 +43,6 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_EVALS_CHANNEL: ${{ vars.SLACK_EVALS_CHANNEL }}
         # Exit code 1 means an eval did not pass, which Slack already reports. Anything else is a broken run.
-        run: npx eve eval --strict || [ $? -eq 1 ]
+        run: |
+          if [ "${{ github.event.schedule }}" = "17 */6 * * *" ] || [ "${{ inputs.everything }}" = "false" ]; then only="--exclude-tag matrix"; fi
+          npx eve eval --strict $only || [ $? -eq 1 ]

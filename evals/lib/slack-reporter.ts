@@ -71,13 +71,16 @@ export function slackReporter(): EvalReporter {
         text: `:rotating_light: Buy evals: ${failures.length} of ${total} did not pass (${summary.failed} failed, ${summary.scored} scored low).${run}`,
       });
       if (!thread) return;
-      for (const failure of failures) {
+      // A long run posts its first 25 evals one by one and names the rest in one last reply; Braintrust holds every detail.
+      const [detailed, rest] = [failures.slice(0, 25), failures.slice(25)];
+      for (const failure of detailed) {
         const kind = failure.verdict === "scored" ? "scored low" : "failed";
         const ask = failure.ask ? `\nShopper typed: _${plain(failure.ask)}_` : "";
         const reply = failure.reply ? `\nThe agent's last reply: _${plain(failure.reply.slice(0, 300))}_` : "";
         const lines = failure.lines.map((line) => `• ${plain(line.slice(0, 600))}`).join("\n");
         await post(token, { channel, thread_ts: thread, text: `*${plain(failure.title)}* ${kind}${ask}${reply}\n${lines}`.slice(0, 3500) });
       }
+      if (rest.length > 0) await post(token, { channel, thread_ts: thread, text: `And ${rest.length} more: ${rest.map((failure) => plain(failure.title)).join(", ")}`.slice(0, 3500) });
     },
   };
 }

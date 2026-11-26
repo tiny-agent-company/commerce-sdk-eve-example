@@ -47,8 +47,10 @@ The shopper approves each purchase on an Agentcard approval page, and a new shop
 The evals send real shopper messages to the agent, which calls the live buy tool, and grade the answer. Nothing is ever ordered: no eval says yes to a cart, and each one fails if a call tries to confirm an order.
 
 ```bash
-npm run eval                 # every eval, about a minute and a half
+npm run eval                 # every eval
 npm run eval -- buy/search   # only the one-message searches
+npm run eval -- --exclude-tag matrix   # the core set, without the coverage matrix
+npm run eval -- --tag locale # one group of the matrix: store, kind, vertical or locale
 npm run eval -- --verbose    # also print the products and Agentcard's reply for each eval
 ```
 
@@ -56,6 +58,7 @@ npm run eval -- --verbose    # also print the products and Agentcard's reply for
 |---|---|
 | [`evals/buy/search.eval.ts`](evals/buy/search.eval.ts) | One message each: a plain product, a brand and model, an exact product, a named store, a budget, a price range, a quantity, a size and colour, specs, a part that must fit a model, things to leave out, a use with no product named, a typo, a vague gift, Spanish, a chatty ask, two products at once, groceries and restaurant food. To add a case, add a line to the list. |
 | [`evals/buy/conversation.eval.ts`](evals/buy/conversation.eval.ts) | Several messages: narrowing a search, switching to another product, picking a product, and a greeting. |
+| [`evals/buy/matrix.eval.ts`](evals/buy/matrix.eval.ts) | The coverage matrix, 66 cases in four groups: `store` (one per named store and per kind of store), `kind` (kinds of ask the searches do not hold), `vertical` (food, groceries, flights, hotels, cars, tables, classes, tickets, rides, and services not built yet) and `locale` (Portuguese, Dutch, German, French, Spanish, European sizes, metric units, stores and delivery outside the US; budgets are in US dollars only for now). |
 | [`evals/judge/calibration.eval.ts`](evals/judge/calibration.eval.ts) | Checks the judge itself with made-up answers whose faults are known. |
 | [`evals/lib/buy.ts`](evals/lib/buy.ts) | Reads the cards the shopper saw and runs the checks. |
 | [`evals/lib/judge.ts`](evals/lib/judge.ts) | The judge: a model that reads every card against every requirement of the ask. |
@@ -83,7 +86,7 @@ The judge counts only what a card states. A shoe whose name gives no size does n
 
 ### Failed evals in Slack
 
-Set `SLACK_BOT_TOKEN` (a bot that can post to the channel) and `SLACK_EVALS_CHANNEL` (the channel's id). A run where an eval did not pass posts one message, with a reply under it for each eval: what the shopper typed, the agent's reply, and each check that failed with the products it saw. A run where everything passes posts nothing.
+Set `SLACK_BOT_TOKEN` (a bot that can post to the channel) and `SLACK_EVALS_CHANNEL` (the channel's id). A run where an eval did not pass posts one message, with a reply under it for each eval: what the shopper typed, the agent's reply, and each check that failed with the products it saw. A run where everything passes posts nothing. A long run details its first 25 evals and names the rest in one reply.
 
 ### Results in Braintrust
 
@@ -91,7 +94,7 @@ Set `BRAINTRUST_API_KEY` and each run is saved as an experiment in the Braintrus
 
 ### Scheduled runs
 
-[`.github/workflows/buy-evals.yml`](.github/workflows/buy-evals.yml) runs the evals every six hours and on demand from the Actions tab. It reads the repository secrets `ANTHROPIC_API_KEY`, `AGENTCARD_CLIENT_ID`, `AGENTCARD_CLIENT_SECRET`, `SLACK_BOT_TOKEN`, `BRAINTRUST_API_KEY` and `AGNOST_ORG_ID`, and the repository variable `SLACK_EVALS_CHANNEL`.
+[`.github/workflows/buy-evals.yml`](.github/workflows/buy-evals.yml) runs the core set every six hours and everything, with the coverage matrix, once a day. It also runs on demand from the Actions tab. It reads the repository secrets `ANTHROPIC_API_KEY`, `AGENTCARD_CLIENT_ID`, `AGENTCARD_CLIENT_SECRET`, `SLACK_BOT_TOKEN`, `BRAINTRUST_API_KEY` and `AGNOST_ORG_ID`, and the repository variable `SLACK_EVALS_CHANNEL`.
 
 ## Conversation tracking with Agnost AI
 
