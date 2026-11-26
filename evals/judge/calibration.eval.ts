@@ -64,7 +64,27 @@ const cases = [
   },
 ];
 
-export default cases.map((fixture) =>
+const grainger = { ask: "large nitrile gloves from Grainger", wants: [{ what: "nitrile gloves", must: ["disposable gloves", "nitrile", "size large"] }] };
+const otherStore = [{ name: "Nitrile Exam Gloves, Large, Box of 100", store: "Amazon", price: "$12.99" }];
+const storeCases = [
+  { name: "accepts other stores' cards after an honest miss", replies: { agentcard: "I found nothing for this at Grainger just now. Here are large nitrile gloves from other stores.", agent: "Grainger had none, so these are from other stores. Want one?" }, said: true },
+  { name: "rejects other stores' cards shown as if from the named store", replies: { agentcard: "Here are large nitrile gloves.", agent: "Found some options. Which one?" }, said: false },
+];
+
+export default [
+  ...storeCases.map((fixture) =>
+    defineEval({
+      description: `judge: ${fixture.name}`,
+      tags: ["judge"],
+      async test(t) {
+        const verdict = await judge(grainger, otherStore, fixture.replies);
+        t.score({ score: verdict.saysNamedStoreMissed === fixture.said ? 1 : 0, message: `expected ${fixture.said}, the judge read ${verdict.saysNamedStoreMissed}` })
+          .label("reads-the-named-store-right")
+          .gate(1);
+      },
+    }),
+  ),
+  ...cases.map((fixture) =>
   defineEval({
     description: `judge: ${fixture.name}`,
     tags: ["judge"],
@@ -86,4 +106,5 @@ export default cases.map((fixture) =>
         .gate(1);
     },
   }),
-);
+),
+];
