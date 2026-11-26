@@ -38,7 +38,7 @@ export interface Expectation {
   priced?: boolean;
   /** True when the thing asked for does not exist, so no card can be it: the cards are not graded, only the replies. */
   nothingToFind?: boolean;
-  /** True when a question back to the shopper is a right answer, as for food that needs an address first. */
+  /** Kept for older cases. Every case now accepts a question back to the shopper with no cards. */
   mayAsk?: boolean;
 }
 
@@ -195,7 +195,9 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
   // One line the Braintrust reporter reads back, so a row shows what the shopper saw on this turn.
   t.log(RECORD + JSON.stringify({ shopper: expected.ask, cards: cards.map((card) => ({ name: card.name, store: card.store, price: card.price })), answered_from_earlier_cards: fresh.length === 0 && earlier.length > 0, agentcard_reply: replies.agentcard, agent_reply: replies.agent, wants: expected.wants, context: expected.context }));
 
-  if (!expected.mayAsk) t.check(cards, satisfies((list: Card[]) => list.length > 0, "the shopper is shown at least one product")).label("has-cards");
+  // A clarifying question is never a failure: an answer that shows nothing and asks the shopper something passes.
+  const asked = /\?/.test(replies.agent) || /\?/.test(replies.agentcard);
+  t.check(cards, satisfies((list: Card[]) => list.length > 0 || asked || expected.mayAsk === true, "the shopper is shown at least one product, or asked a question")).label("has-cards");
   if (cards.length > 0) {
     const missing = cards.filter((card) => !card.name || !card.store || (expected.priced !== false && dollars(card.price) === null));
     t.check(missing, satisfies((list: Card[]) => list.length === 0, `every card has a name, a store and a price (missing on: ${missing.map(line).join("; ")})`)).label("complete-cards");
@@ -239,7 +241,7 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
   t.score(verdict.then((v) => ({ score: v.agentFalseClaims.length === 0 ? 1 : 0, message: v.agentFalseClaims.join("; ") || "nothing in the agent's reply contradicts the cards" })))
     .label("agent-reply-true")
     .gate(1);
-  t.score(verdict.then((v) => ({ score: v.answersTheAsk ? 1 : 0, message: v.answerNote })))
+  t.score(verdict.then((v) => ({ score: v.answersTheAsk || (asked && cards.length === 0) ? 1 : 0, message: asked && cards.length === 0 ? "the reply asks the shopper a question, which is never a failure" : v.answerNote })))
     .label("answers-the-ask")
     .gate(1);
   return cards;

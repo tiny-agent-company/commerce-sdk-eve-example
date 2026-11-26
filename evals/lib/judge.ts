@@ -58,6 +58,7 @@ const RULES = [
   "The card numbers are this prompt's own. A reply that says `number 2` or `#1` counts in its own list, which may be in another order, so match a reply's products to cards by name and never by number.",
   "A reply may also mention a product from the list of products found but not shown; that is not a false claim, though its price must still match.",
   "When the test's author says what a right answer looks like, hold the replies to it in `answers_the_ask`: a reply in the wrong language, or one that hides that a store or a service is not available, does not answer the ask.",
+  "A reply that asks the shopper a clarifying question always answers the ask: never mark asking a question as a failure.",
   "The replies answer the ask when, between them, they offer what was asked for, or ask the shopper for what is needed to get it, or say plainly that it was not found. They do not answer it when they ignore part of the ask, or present something else as if it were what was asked.",
 ].join("\n");
 
