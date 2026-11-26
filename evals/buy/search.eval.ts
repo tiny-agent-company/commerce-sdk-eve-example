@@ -1,5 +1,5 @@
 import { defineEval } from "eve/evals";
-import { checkAnswer, type Expectation } from "../lib/buy.js";
+import { checkAnswer, checkWordsUnchanged, type Expectation } from "../lib/buy.js";
 
 /**
  * One shopper message each. `wants` spells out what the shopper asked for, one fact per requirement, so the judge
@@ -52,6 +52,7 @@ export default cases.map(({ name, ...expected }) =>
       const turn = await t.send(expected.ask);
       t.succeeded();
       turn.calledTool("buy");
+      checkWordsUnchanged(t, turn, expected.ask);
       await checkAnswer(t, turn, expected);
     },
   }),

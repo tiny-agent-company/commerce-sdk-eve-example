@@ -67,7 +67,8 @@ export function cardsShown(turn: EveEvalTurn): Card[] {
   const cards = new Map<string, Card>();
   const add = (card: Card) => {
     const key = card.id ?? `${card.name}|${card.store}`;
-    if (!cards.has(key)) cards.set(key, card);
+    // A card sent again in the same turn carries its newest price, so the last copy wins and the first keeps its place.
+    cards.set(key, card);
   };
   for (const event of turn.events) {
     if (event.type !== "call.progress") continue;
@@ -78,7 +79,10 @@ export function cardsShown(turn: EveEvalTurn): Card[] {
       add({ id: (link.productId as string) ?? null, name: link.title, store: (link.store as string) ?? null, price: (link.price as string) ?? null });
     }
   }
-  for (const product of lastAnswer(turn)?.products ?? []) add({ id: product.product_id, name: product.name, store: product.store, price: product.price });
+  // The model's list fills in only a product no card carried: its price is the one the reply quotes.
+  for (const product of lastAnswer(turn)?.products ?? []) {
+    if (!cards.has(product.product_id ?? `${product.name}|${product.store}`)) add({ id: product.product_id, name: product.name, store: product.store, price: product.price });
+  }
   return [...cards.values()];
 }
 
@@ -102,6 +106,17 @@ export function dollars(price: string | null): number | null {
 }
 
 const line = (card: Card) => `${card.name.slice(0, 90)} (${card.store ?? "no store"}, ${card.price ?? "no price"})`;
+
+/**
+ * The agent hands the buy tool the shopper's message as it was typed. A reworded ask tests the agent's wording, not the
+ * shopper's, and can hide or cause a wrong answer.
+ */
+export function checkWordsUnchanged(t: EveEvalContext, turn: EveEvalTurn, message: string): void {
+  const plain = (text: unknown) => String(text ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const sent = buyCalls(turn)[0]?.input.ask;
+  if (sent === undefined) return;
+  t.check(sent, satisfies((ask: unknown) => plain(ask) === plain(message), `the buy tool got the shopper's words unchanged (it got: ${String(sent)})`)).label("shopper-words-unchanged");
+}
 
 /**
  * The checks every turn must pass, whatever the shopper asked: nothing failed, no order was placed or started, and the
