@@ -37,7 +37,7 @@ An [eve](https://eve.dev) agent that buys things for its users at real stores wi
 | [`agent/instructions.md`](agent/instructions.md) | The system prompt. The Shopping section tells the agent to pass the shopper's words to `buy`, keep its reply short, and order only after the shopper says yes. |
 | [`agent/tools/buy.ts`](agent/tools/buy.ts) | Wraps the SDK's `buyTool` as an eve tool. It keeps one buy tool per shopper and session, so each chat holds its own cart, and streams product, Vault and approval links to the chat as progress snapshots while the model reads only the final result. It sends Agentcard the shopper's latest message as they typed it, read from the chat, rather than the words the model put in `ask`. |
 | [`agent/lib/shopper-words.ts`](agent/lib/shopper-words.ts) | Picks the words the buy tool sends: the shopper's own message on the first call for it, and the model's words on a second call in the same reply. |
-| [`agent/channels/eve.ts`](agent/channels/eve.ts) | The HTTP channel. The signed-in user becomes the shopper; without auth, each session is its own shopper. |
+| [`agent/channels/eve.ts`](agent/channels/eve.ts) | The HTTP channel. The signed-in user becomes the shopper; without auth, and in local development and the evals, each session is its own shopper. |
 | [`agent/lib/agnost.ts`](agent/lib/agnost.ts) | Sends each buy conversation to Agnost AI when `AGNOST_ORG_ID` is set. |
 | [`evals/`](evals) | Checks that run real shopper messages through the agent and grade what comes back. |
 
@@ -45,7 +45,7 @@ The shopper approves each purchase on an Agentcard approval page, and a new shop
 
 ## Evals
 
-The evals send real shopper messages to the agent, which calls the live buy tool, and grade the answer. Nothing is ever ordered: no eval says yes to a cart, and each one fails if a call tries to confirm an order.
+The evals send real shopper messages to the agent, which calls the live buy tool, and grade the answer. Nothing is ever ordered. No eval says yes to a cart, and each one fails if a call tries to confirm an order, with one exception: the checkout evals say yes with sandbox credentials only, where Agentcard stops every purchase at the payment, and they fail if anything is placed. See [Cart and checkout, store by store](#cart-and-checkout-store-by-store).
 
 ```bash
 npm run eval                 # every eval
@@ -53,6 +53,8 @@ npm run eval -- buy/search   # only the one-message searches
 npm run eval -- --exclude-tag matrix   # the core set, without the coverage matrix
 npm run eval -- --tag locale # one group of the matrix: store, kind, vertical or locale
 npm run eval -- --exclude-tag real     # leave out the real asks that failed
+npm run eval -- --tag cart             # can each store put a product in the cart
+npm run eval -- --tag checkout         # does each store get as far as the checkout step
 npm run eval -- --verbose    # also print the products and Agentcard's reply for each eval
 ```
 
@@ -61,6 +63,10 @@ npm run eval -- --verbose    # also print the products and Agentcard's reply for
 | [`evals/buy/search.eval.ts`](evals/buy/search.eval.ts) | One message each: a plain product, a brand and model, an exact product, a named store, a budget, a price range, a quantity, a size and colour, specs, a part that must fit a model, things to leave out, a use with no product named, a typo, a vague gift, Spanish, a chatty ask, two products at once, groceries and restaurant food. To add a case, add a line to the list. |
 | [`evals/buy/conversation.eval.ts`](evals/buy/conversation.eval.ts) | Several messages: narrowing a search, switching to another product, picking a product, and a greeting. |
 | [`evals/buy/matrix.eval.ts`](evals/buy/matrix.eval.ts) | The coverage matrix, 66 cases in four groups: `store` (one per named store and per kind of store), `kind` (kinds of ask the searches do not hold), `vertical` (food, groceries, flights, hotels, cars, tables, classes, tickets, rides, and services not built yet) and `locale` (Portuguese, Dutch, German, French, Spanish, European sizes, metric units, stores and delivery outside the US; budgets are in US dollars only for now). |
+| [`evals/buy/cart.eval.ts`](evals/buy/cart.eval.ts) | One eval per store and per supplier that can serve it: the shopper asks for one cheap product, picks a card, and the product must be in the cart, at that store, with a price and a total that adds up. See [Cart and checkout, store by store](#cart-and-checkout-store-by-store). |
+| [`evals/buy/checkout.eval.ts`](evals/buy/checkout.eval.ts) | The same rows, one step further: the purchase must reach the final cart and the ask for a yes, and the yes must be stopped at the payment with nothing ordered. The file's first comment defines "got to the checkout step" and says why it is safe. |
+| [`evals/lib/stores.ts`](evals/lib/stores.ts) | The list of stores and suppliers both files run. To add a store, add a row. |
+| [`evals/lib/purchase.ts`](evals/lib/purchase.ts) | The shopper those evals play, with its placeholder address and details, and the fixed rules that check a cart. |
 | [`evals/buy/real.eval.ts`](evals/buy/real.eval.ts) | Real asks that did not get a good answer, loaded from a private Braintrust dataset when the evals run. See [Real asks that failed](#real-asks-that-failed). |
 | [`evals/judge/calibration.eval.ts`](evals/judge/calibration.eval.ts) | Checks the judge itself with made-up answers whose faults are known. |
 | [`evals/lib/buy.ts`](evals/lib/buy.ts) | Reads the cards the shopper saw and runs the checks. |
@@ -86,6 +92,30 @@ A judge model (`claude-opus-5-5`, on the same Anthropic key) then reads every ca
 | `answers-the-ask` | The replies ignore part of the ask, or present something else as if it were it. |
 
 The judge counts only what a card states. A shoe whose name gives no size does not break "size 10", and words of taste such as "nothing fancy" break nothing. A follow-up message may be answered from cards already in the chat, and is then graded on those.
+
+### Cart and checkout, store by store
+
+Two files check each store end to end, short of buying: [`evals/buy/cart.eval.ts`](evals/buy/cart.eval.ts) (tag `cart`) and [`evals/buy/checkout.eval.ts`](evals/buy/checkout.eval.ts) (tag `checkout`). Both make one eval per row of [`evals/lib/stores.ts`](evals/lib/stores.ts), and a row is a store together with the supplier that serves it.
+
+Agentcard reaches a store through one of several suppliers, and the shopper never hears which. Two of them can serve the same big retailer:
+
+- The retail ordering supplier searches the retailer and places the order. Its cart exists right after the pick, with a total that is an estimate until the order goes in.
+- The product catalog supplier lists the product, and the purchase then runs through the store's own checkout page, which Agentcard fills in with a hosted browser. Its cart exists only once the store has priced it, tax and shipping included.
+
+Agentcard's code chooses the supplier, not the shopper's words, so most stores have one row: the shopper picks the first card that is the product, and the eval logs which path the cart was checked out through. At a few retailers a card from the catalog takes a different path from a card that opens the store's own page (the store's own checkout instead of the retail supplier). Those retailers have a second row that picks only a catalog card. Every other supplier (a Shopify store's own catalog, a brand's own site, eBay's used listings, food delivery, flights, hotels, cars, tables, classes, tickets and events) has one row per store. There are countless Shopify stores, so one stands for all of them.
+
+**The cart eval** passes when the cart exists at the named store, holds exactly the picked product and the asked quantity, shows a price, has a total that adds up from its items and fees or is marked an estimate, and nothing was ordered.
+
+**The checkout eval** goes on to the last step before money can move:
+
+1. The shopper gives what the checkout asks for (a delivery address, a name, an email, a phone number) and Agentcard shows the final cart and asks for the yes. The cart must still hold the picked product, and the total must never change between two answers without the reply naming the new one.
+2. For goods, the shopper says yes, and the answer must be the payment step and nothing past it: in the sandbox a refusal that says test mode cannot pay (`sandbox_mode`) or that the shopper has no test card (`test_card_missing`); with a card, the approval page or the page to save one. A retailer may first price the order's tax and shipping, so the shopper waits and says yes again, a few times at most.
+
+Three things keep this safe. The evals run with sandbox credentials only and skip themselves otherwise, and Agentcard refuses every sandbox payment before it reserves money, makes a card or calls a store. Each chat is a new shopper with no saved card, and no eval opens a page to save or approve one. And every detail the shopper gives is a placeholder: a public landmark as the address, a stand-in name, an email on a domain reserved for examples and a phone number from the range reserved for fiction.
+
+Some purchases stop earlier. A booking (a flight, a room, a car, a table, a class, a ticket) stops at step 1, because no eval says yes to a booking. Food delivery, and a store that only checks out signed in, stop when the cart is built and the shopper is handed the sign-in to their own account, because an eval has no such account and must not use a real one. A ride is skipped for the same reason: its first step is that sign-in. A row is also skipped, with the reason, when a store's checkout refuses the placeholder details. Stores that cannot put anything in a cart yet (Uber Eats, Rappi, Rinse, TaskRabbit and a few more) are listed with the reason at the end of `stores.ts` and have no eval.
+
+Every rule is fixed; no judge model reads a cart. A store that is down, a supplier that shows no card for the store, or a checkout that asks for something the shopper cannot give fails that one eval with the reason in plain words, and the run goes on.
 
 ### Failed evals in Slack
 
@@ -224,12 +254,13 @@ Run it once a day after 12:00 UTC, so that a follow-up sent in the twelve hours 
 
 ### Scheduled runs on Modal
 
-[`modal_app.py`](modal_app.py) runs the evals on [Modal](https://modal.com): the core set every six hours and everything, with the coverage matrix and the reviewed real asks, once a day. The job that picks the real asks does not run on Modal. Each run checks out the current `main` first, so a merged change is picked up by the next run with no new deploy.
+[`modal_app.py`](modal_app.py) runs the evals on [Modal](https://modal.com): the core set every six hours, the coverage matrix and the reviewed real asks once a day, and the cart and checkout evals once a day in a run of their own, because each is a chat of several messages with a live store and the run takes about an hour. The job that picks the real asks does not run on Modal. Each run checks out the current `main` first, so a merged change is picked up by the next run with no new deploy.
 
 ```bash
 modal deploy modal_app.py            # once, and again only when modal_app.py changes
 modal run modal_app.py::core         # run the core set now
-modal run modal_app.py::everything   # run everything now
+modal run modal_app.py::everything   # run the daily set now
+modal run modal_app.py::purchases    # run the cart and checkout evals now
 ```
 
 The keys live in the Modal secret `buy-evals`: `ANTHROPIC_API_KEY`, `AGENTCARD_CLIENT_ID`, `AGENTCARD_CLIENT_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_EVALS_CHANNEL`, `BRAINTRUST_API_KEY` and, to track conversations, `AGNOST_ORG_ID`.

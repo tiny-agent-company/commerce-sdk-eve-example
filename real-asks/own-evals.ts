@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { words } from "./scrub.ts";
 
 /**
- * The messages this repository's own evals send, read from the eval files: every `ask: "..."`, every entry of a
- * `messages: [...]` list and every `send("...")`.
+ * The messages this repository's own evals send, read from the eval files and from the list of stores the cart and
+ * checkout evals share (evals/lib/stores.ts): every `ask: "..."`, every entry of a `messages: [...]` list and every
+ * `send("...")`.
  *
  * The evals talk to the live buy tool, so their conversations sit in the same database the job reads. They are kept
  * out three ways. They run with test-mode credentials, and test mode is never read. Their client's id belongs on
@@ -23,7 +24,7 @@ export function ownEvalAsks(folder = join(import.meta.dirname, "..", "evals")): 
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) read(path);
-      else if (entry.name.endsWith(".eval.ts")) {
+      else if (entry.name.endsWith(".eval.ts") || entry.name === "stores.ts") {
         const source = readFileSync(path, "utf8");
         for (const found of source.matchAll(/\bask:\s*"((?:[^"\\]|\\.)*)"/g)) keep(found[1]!);
         for (const found of source.matchAll(/\bsend\(\s*"((?:[^"\\]|\\.)*)"/g)) keep(found[1]!);
