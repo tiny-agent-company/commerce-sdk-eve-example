@@ -180,7 +180,7 @@ The asks themselves are never in this repository, which is public. They live in 
 | `input.messages` | The cleaned messages to send: the ask, and the earlier messages of the chat when the ask depends on them. |
 | `expected.wants` | The requirements, in the shape the judge reads: each thing asked for (`what`) and the facts a product must meet to be it (`must`). |
 | `expected.may_ask`, `expected.priced`, `expected.right_answer` | Whether a question back is a right answer; whether cards carry a price; and what a right answer looks like when it is not simply showing the thing. |
-| `metadata.review` | `draft, not reviewed` when the job saves the row. A person's thumbs up or thumbs down in Slack changes it to `reviewed` or `rejected`, with who and when under `review_by`, `review_at` and `review_via`. |
+| `metadata.review` | `draft, not reviewed` when the job saves the row. A thumbs up or thumbs down in Slack changes it to `reviewed` or `rejected`, with who and when under `review_by`, `review_at` and `review_via`, and who decided under `decided_by` (see [Reviewing a row](#reviewing-a-row)). |
 | `metadata.slack` | The channel and timestamp of the row's review post, which is how an emoji on the post is tied back to the row. |
 | `metadata.fix` | The issue that tracks the fix, once the row has its thumbs up. |
 | `metadata.picked_for`, `day`, `kind` | The signs, the day of the conversation, and the kind of thing asked for (retail, groceries, flights and so on). |
@@ -204,7 +204,7 @@ The shopper's message is the cleaned one saved on the row. The reply is its firs
 | 👍 (any skin tone) | The row's `metadata.review` becomes `reviewed`, so it runs as an eval from the next daily run and fails until the fix is live. An issue is opened with the ask, the reply, the cards, the requirements and the command that sends the ask again, and a coding agent starts on it: root cause first, then a fix in the backend for every store, then a pull request. The post gets a reply naming the issue, an hourglass while the agent works and a check when the pull request lands. When the agent finds the answer was fine after all, it says so in the thread and closes the issue. |
 | 👎 | The row's `metadata.review` becomes `rejected` and the post gets a wastebasket. A rejected row never runs, and keeping it stops the same ask from being picked again. |
 
-Only an emoji from a person on the team counts, never a bot's. A decision is final: taking the emoji off later changes nothing. To undo one, change `metadata.review` on the row in Braintrust.
+An emoji from a person on the team counts. No bot's counts, with one exception: the team's assistant reviews each post that no person has reacted to within 30 minutes. It replies in the thread with its reasons and adds 👍 or 👎, or says it is unsure and leaves the post for a person. Its emoji is acted on only after 10 minutes, so a person can overrule it. A person's emoji always wins, and so does taking the assistant's emoji off. The row records who decided under `metadata.decided_by`, and the assistant's reasons under `metadata.nori_review`. A decision is final: taking the emoji off later changes nothing. To undo one, change `metadata.review` on the row in Braintrust.
 
 The emoji are read by a small job outside this repository, on the machine that runs Agentcard's other alert handling. It looks only at the messages a row points at through `metadata.slack`, so the run summaries posted to the same channel ([Failed evals in Slack](#failed-evals-in-slack)) are never treated as something to fix.
 
