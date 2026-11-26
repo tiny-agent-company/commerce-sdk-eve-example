@@ -58,6 +58,16 @@ test("uses the cards a turn stored, whatever the last search holds", () => {
 });
 
 test("reads stored cards as not stored when their shape is not a list of cards", () => {
+  assert.deepEqual(
+    readCards([
+      { name: "Stoneware Mug, 12 oz", store: "Potters", price_cents: 1800, price_from: false, currency: "usd", kind: "product" },
+      { name: "Paper Towels, 6 rolls", store: "Big Box", price_cents: 848, price_from: true, currency: "usd", kind: "product" },
+    ]),
+    [
+      { name: "Stoneware Mug, 12 oz", store: "Potters", price: "$18.00" },
+      { name: "Paper Towels, 6 rolls", store: "Big Box", price: "from $8.48" },
+    ],
+  );
   assert.equal(readCards(undefined), null);
   assert.equal(readCards({ items: [] }), null);
   assert.equal(readCards(["a name"]), null);

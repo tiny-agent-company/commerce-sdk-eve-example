@@ -104,7 +104,7 @@ const CONVERSATIONS = `
 const MESSAGES = `
   select m.id, m."conversationId" as conversation, m.role, left(m.body, 2000) as body, m."createdAt" as at,
          (m.meta ? 'shopperChoice') as tapped,
-         case when m.meta ? 'turn' then jsonb_build_object(
+         case when m.meta ? 'turn' or m.meta ? 'shown_cards' then jsonb_build_object(
            'status', m.meta->'turn'->>'status',
            'nextAction', m.meta->'turn'->>'next_action',
            'declineCode', m.meta->'turn'->>'decline_code',
@@ -112,7 +112,7 @@ const MESSAGES = `
            'tools', case when jsonb_typeof(m.meta->'turn'->'tools') = 'array' then m.meta->'turn'->'tools' else '[]'::jsonb end,
            'cart', jsonb_typeof(m.meta->'turn'->'cart') = 'object',
            'ordered', m.meta->'turn'->>'order_id' is not null,
-           'cards', coalesce(${['$3::text', "'cards'", "'shown_cards'", "'cards_shown'"].map((key) => `case when jsonb_typeof(m.meta->'turn'->${key}) = 'array' and jsonb_array_length(m.meta->'turn'->${key}) <= 60 then m.meta->'turn'->${key} end`).join(", ")})) end as turn
+           'cards', coalesce(case when jsonb_typeof(m.meta->'shown_cards'->'cards') = 'array' and jsonb_array_length(m.meta->'shown_cards'->'cards') <= 60 then m.meta->'shown_cards'->'cards' end, ${['$3::text', "'cards'", "'shown_cards'", "'cards_shown'"].map((key) => `case when jsonb_typeof(m.meta->'turn'->${key}) = 'array' and jsonb_array_length(m.meta->'turn'->${key}) <= 60 then m.meta->'turn'->${key} end`).join(", ")})) end as turn
     from "ChatMessage" m
    where m."conversationId" = any($1::text[]) and m."createdAt" < $2
    order by m."conversationId", m."createdAt", m.id
@@ -132,11 +132,12 @@ function utcText(at: Date): string {
 function price(cents: unknown, currency: unknown): string | null {
   if (typeof cents !== "number") return null;
   const amount = (cents / 100).toFixed(2);
-  return !currency || currency === "USD" ? `$${amount}` : `${amount} ${String(currency)}`;
+  return !currency || String(currency).toUpperCase() === "USD" ? `$${amount}` : `${amount} ${String(currency).toUpperCase()}`;
 }
 
 /**
- * The cards a turn stored, read without trusting their shape: the backend's field for them is new and may still change.
+ * The cards a turn stored, read without trusting their shape. The backend stores them on the reply's message as
+ * `meta.shown_cards.cards` (since 2026-11-26); older field names under `meta.turn` are still read in case it moves.
  * A card needs a name (`name` or `title`); its store may be a word or an object with a name; its price may be text or a
  * number of cents. Anything that is not a list of such cards reads as "not stored", and the job falls back to its guess
  * (cards.ts).
@@ -152,7 +153,8 @@ export function readCards(stored: unknown): Product[] | null {
     if (!name) return null;
     const store = card.store && typeof card.store === "object" ? text((card.store as Record<string, unknown>).name) : text(card.store);
     const cents = [card.priceCents, card.price_cents].find((value) => typeof value === "number");
-    cards.push({ name, store: store ?? text(card.merchant_name) ?? text(card.merchant) ?? text(card.seller), price: text(card.price) ?? price(cents, card.currency) });
+    const priced = text(card.price) ?? price(cents, card.currency);
+    cards.push({ name, store: store ?? text(card.merchant_name) ?? text(card.merchant) ?? text(card.seller), price: priced && card.price_from === true ? `from ${priced}` : priced });
   }
   return cards;
 }
