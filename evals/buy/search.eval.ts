@@ -18,7 +18,7 @@ const cases: (Expectation & { name: string })[] = [
   { name: "misspelled", ask: "iphone chargr usb c", wants: [{ what: "iPhone USB-C charger", must: ["a charger or charging cable", "USB-C", "works with an iPhone"] }] },
   { name: "vague gift", ask: "a birthday gift for my dad who likes fishing, around $50", maxPrice: 75, wants: [{ what: "fishing gift", must: ["something for fishing or a fishing-themed gift", "costs around $50, at most $75"] }] },
   { name: "Spanish with a budget", ask: "quiero comprar una cafetera italiana por menos de 40 dólares", maxPrice: 40, wants: [{ what: "moka pot (cafetera italiana)", must: ["a stovetop moka pot coffee maker", "costs under $40"] }] },
-  { name: "long and chatty", ask: "hey so my blender just died, can you find me a decent one that can crush ice? nothing fancy", wants: [{ what: "blender", must: ["a blender", "a countertop blender that can crush ice, not a hand or immersion blender"] }] },
+  { name: "long and chatty", ask: "hey so my blender just died, can you find me a decent one that can crush ice? nothing fancy", wants: [{ what: "blender", must: ["a blender", "a blender that sits on a counter and plugs in, a personal countertop one such as a NutriBullet included, that can crush ice: not a hand or immersion blender, and not a portable, cordless or rechargeable travel cup blender"] }] },
   {
     name: "several things at once",
     ask: "a phone case and a screen protector for an iPhone 16",
