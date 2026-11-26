@@ -2,6 +2,7 @@ import { AgentcardClient, BUY_TOOL_DESCRIPTION, buyTool, buyToolDefinition } fro
 import type { BuyToolLink, BuyToolResult } from "@agent-cards/commerce-sdk";
 import { defineTool } from "eve/tools";
 import { recordBuy, type BuyRecord } from "../lib/agnost.js";
+import { askToSend } from "../lib/shopper-words.js";
 
 const agentcard = new AgentcardClient({
   clientId: process.env.AGENTCARD_CLIENT_ID ?? "",
@@ -46,8 +47,13 @@ export default defineTool({
       shoppers.set(key, buy);
     }
 
+    // The shopper's message goes to Agentcard as they typed it, read from the chat, whatever words the model put in `ask`
+    // (lib/shopper-words.ts). The model's `confirm`, `new_order`, `product_id`, `store_id` and `more` stay as it set them.
+    const ask = askToSend(ctx.messages, String(input.ask ?? ""));
+    const call = { ...input, ask };
+
     // Agnost AI keeps a record of the call when AGNOST_ORG_ID is set: the shopper's words now, the answer once it is in.
-    const record = recordBuy({ shopperId: externalUserId, conversationId: ctx.session.id, ask: input.ask as string });
+    const record = recordBuy({ shopperId: externalUserId, conversationId: ctx.session.id, ask });
 
     // The links and carts reach the chat as progress snapshots; the model only reads the final result.
     const links: BuyToolLink[] = [];
@@ -55,7 +61,7 @@ export default defineTool({
     let more: BuyToolLink[] = [];
     let results: BuyToolResult[] = [];
     let changed = () => {};
-    const turn = buy.turn(input.ask as string, {
+    const turn = buy.turn(ask, {
       onReaction: () => {},
       onItem: (item) => {
         if (item.kind === "link") links.push(item.link);
@@ -70,10 +76,11 @@ export default defineTool({
         changed();
       },
     });
-    const snapshot = () => ({ links: [...links], more: [...more], carts: results.at(-1)?.carts ?? [], status: results.at(-1)?.status ?? null });
+    // `ask` is the words this call sent, which the evals read to check the shopper's words arrived unchanged.
+    const snapshot = () => ({ ask, links: [...links], more: [...more], carts: results.at(-1)?.carts ?? [], status: results.at(-1)?.status ?? null });
 
     let done = false;
-    const run = turn.handle(input).finally(() => {
+    const run = turn.handle(call).finally(() => {
       done = true;
       changed();
     });

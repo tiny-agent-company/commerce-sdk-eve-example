@@ -35,7 +35,8 @@ An [eve](https://eve.dev) agent that buys things for its users at real stores wi
 |---|---|
 | [`agent/agent.ts`](agent/agent.ts) | Sets the model, `claude-sonnet-5`. |
 | [`agent/instructions.md`](agent/instructions.md) | The system prompt. The Shopping section tells the agent to pass the shopper's words to `buy`, keep its reply short, and order only after the shopper says yes. |
-| [`agent/tools/buy.ts`](agent/tools/buy.ts) | Wraps the SDK's `buyTool` as an eve tool. It keeps one buy tool per shopper and session, so each chat holds its own cart, and streams product, Vault and approval links to the chat as progress snapshots while the model reads only the final result. |
+| [`agent/tools/buy.ts`](agent/tools/buy.ts) | Wraps the SDK's `buyTool` as an eve tool. It keeps one buy tool per shopper and session, so each chat holds its own cart, and streams product, Vault and approval links to the chat as progress snapshots while the model reads only the final result. It sends Agentcard the shopper's latest message as they typed it, read from the chat, rather than the words the model put in `ask`. |
+| [`agent/lib/shopper-words.ts`](agent/lib/shopper-words.ts) | Picks the words the buy tool sends: the shopper's own message on the first call for it, and the model's words on a second call in the same reply. |
 | [`agent/channels/eve.ts`](agent/channels/eve.ts) | The HTTP channel. The signed-in user becomes the shopper; without auth, each session is its own shopper. |
 | [`agent/lib/agnost.ts`](agent/lib/agnost.ts) | Sends each buy conversation to Agnost AI when `AGNOST_ORG_ID` is set. |
 | [`evals/`](evals) | Checks that run real shopper messages through the agent and grade what comes back. |
@@ -237,7 +238,7 @@ The keys live in the Modal secret `buy-evals`: `ANTHROPIC_API_KEY`, `AGENTCARD_C
 
 [Agnost AI](https://agnost.ai) shows what shoppers ask and what they get back. Set `AGNOST_ORG_ID` to the organization id from Agnost's settings page, and every call of the buy tool is recorded there, grouped into one conversation per chat. Without the variable nothing is sent.
 
-Agnost receives the shopper's words as the agent passed them to the tool, Agentcard's reply with every link taken out, and a few facts to filter by: the status, the names of the products shown, and the cart's store and total. The shopper is named by a hash of their id. A shopper's words can hold personal details such as a delivery address, so check that Agnost is approved for that before turning it on in production.
+Agnost receives the shopper's words as the tool sent them to Agentcard, Agentcard's reply with every link taken out, and a few facts to filter by: the status, the names of the products shown, and the cart's store and total. The shopper is named by a hash of their id. A shopper's words can hold personal details such as a delivery address, so check that Agnost is approved for that before turning it on in production.
 
 ## Deploy on Vercel
 

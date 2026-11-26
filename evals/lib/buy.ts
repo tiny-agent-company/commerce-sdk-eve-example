@@ -108,13 +108,28 @@ export function dollars(price: string | null): number | null {
 const line = (card: Card) => `${card.name.slice(0, 90)} (${card.store ?? "no store"}, ${card.price ?? "no price"})`;
 
 /**
+ * The words the turn's first buy call sent to Agentcard. The tool sends the shopper's message from the chat, whatever the
+ * model put in `ask` (agent/lib/shopper-words.ts), and names the words it sent in each snapshot it streams; a turn with no
+ * snapshot falls back to the model's `ask`.
+ */
+export function wordsSent(turn: EveEvalTurn): string | undefined {
+  for (const event of turn.events) {
+    if (event.type !== "call.progress") continue;
+    const output = (event.data as { output?: unknown }).output;
+    if (output && typeof output === "object" && typeof (output as { ask?: unknown }).ask === "string") return (output as { ask: string }).ask;
+  }
+  const ask = buyCalls(turn)[0]?.input.ask;
+  return ask === undefined ? undefined : String(ask);
+}
+
+/**
  * The agent hands the buy tool the shopper's message as it was typed. A reworded ask tests the agent's wording, not the
  * shopper's, and can hide or cause a wrong answer. `showWords` is false for a real shopper's ask, whose words stay out
  * of the check's message.
  */
 export function checkWordsUnchanged(t: EveEvalContext, turn: EveEvalTurn, message: string, showWords = true): void {
   const plain = (text: unknown) => String(text ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-  const sent = buyCalls(turn)[0]?.input.ask;
+  const sent = wordsSent(turn);
   if (sent === undefined) return;
   t.check(sent, satisfies((ask: unknown) => plain(ask) === plain(message), `the buy tool got the shopper's words unchanged${showWords ? ` (it got: ${String(sent)})` : ""}`)).label("shopper-words-unchanged");
 }
