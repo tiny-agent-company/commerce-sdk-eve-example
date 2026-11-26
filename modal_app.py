@@ -37,18 +37,18 @@ def run_evals(*flags: str) -> None:
 @app.function(image=image, secrets=keys, timeout=1800, cpu=2, memory=4096, retries=0, schedule=modal.Cron("17 */6 * * *", timezone="UTC"))
 def core() -> None:
     """Every six hours: everything but the coverage matrix, the real asks and the cart and checkout evals."""
-    run_evals("--exclude-tag", "matrix", "--exclude-tag", "real", "--exclude-tag", "cart", "--exclude-tag", "checkout")
+    run_evals("--exclude-tag", "matrix", "--exclude-tag", "real", "--exclude-tag", "cart", "--exclude-tag", "checkout", "--exclude-tag", "asked-once")
 
 
 @app.function(image=image, secrets=keys, timeout=3600, cpu=2, memory=4096, retries=0, schedule=modal.Cron("47 13 * * *", timezone="UTC"))
 def everything() -> None:
     """Once a day: the core set, the coverage matrix and the reviewed real asks (at most REAL_ASKS_LIMIT of them). The cart
     and checkout evals have a daily run of their own below, because they take much longer."""
-    run_evals("--exclude-tag", "cart", "--exclude-tag", "checkout")
+    run_evals("--exclude-tag", "cart", "--exclude-tag", "checkout", "--exclude-tag", "asked-once")
 
 
 @app.function(image=image, secrets=keys, timeout=10800, cpu=2, memory=4096, retries=0, schedule=modal.Cron("17 15 * * *", timezone="UTC"))
 def purchases() -> None:
     """Once a day: the cart and checkout evals. Each is a chat of several messages with a live store, and a store's own
     checkout can take minutes to price a cart, so they run apart from the other evals and get three hours."""
-    run_evals("--tag", "cart", "--tag", "checkout", "--max-concurrency", "6")
+    run_evals("--tag", "cart", "--tag", "checkout", "--tag", "asked-once", "--max-concurrency", "6")

@@ -177,27 +177,27 @@ export function readyForTheYes(answer: Answer | null): boolean {
 }
 
 /** What the shopper says next, or null when the reply asks for nothing this shopper can give. */
-function nextMessage(answer: Answer, row: StoreCase, sent: Set<string>, options: string[] = []): string | null {
+function nextMessage(answer: Answer, row: StoreCase, sent: Set<string>, options: string[] = [], choose: (value: string) => string = (value) => value): string | null {
   const reply = answer.reply;
   const firstValue = (value: string | undefined) => value?.replace(/\s*\(\+[^)]*\)\s*$/, "").trim();
   // A required choice, such as a size or a taco's filling: the first value of each group, as the store lists it.
   if (answer.choice?.groups.length) {
     const groups = answer.choice.groups.filter((group) => group.required);
     const message = (groups.length > 0 ? groups : answer.choice.groups.slice(0, 1)).map((group) => firstValue(group.options[0])).filter(Boolean).join(", ");
-    if (message && !sent.has(message)) return message;
+    if (message && !sent.has(message)) return choose(message);
   }
   // The address read back: "Is it 1 Ferry Plz, San Francisco, CA 94111? Say yes, or send me the right address."
   if (/say yes,? or (send|tell|give)/i.test(reply) || /^is (it|that) .+\?/i.test(reply.trim())) return row.kind === "booking" ? null : "yes";
   if (/date of birth|\bgender\b|\be-?mail\b|full name|legal (first|name)|first and last name|what name|driver's details|guest details/i.test(reply)) return detailsAskedFor(reply, sent);
   if (/phone/i.test(reply) && /\?|need/i.test(reply)) return SHOPPER.phone;
-  if (answer.next_action === "shipping_details" || /(where|what|which|send|need).{0,60}(address|deliver|ship|zip)/i.test(reply)) return sent.has(SHOPPER.address) ? null : SHOPPER.address;
+  if (answer.next_action === "shipping_details" || /(where|what|which|send|need).{0,60}(address|deliver|ship|zip)/i.test(reply)) return sent.has(row.address ?? SHOPPER.address) ? null : (row.address ?? SHOPPER.address);
   if (/as it comes|the standard way|or changed\?/i.test(reply)) return "as it comes";
   // A choice written on one line: "Which size? Size: XS, S, M, L". The shopper is a medium, else takes the first.
   const inline = reply.match(/\?\s*[A-Za-z ]{2,20}:\s*([^.\n]+,[^.\n]+)/);
   if (inline) {
     const values = inline[1]!.split(/,\s*/).map((value) => value.trim()).filter(Boolean);
     const value = values.find((one) => /^(m|medium)$/i.test(one)) ?? values.find((one) => !sent.has(one));
-    if (value && !sent.has(value)) return value;
+    if (value && !sent.has(value)) return choose(value);
   }
   // "Want me to add it to your cart?", or the same product at the price the store now shows: yes, while no cart exists.
   // This is never the yes that pays, which is only asked for over a cart.
@@ -208,7 +208,10 @@ function nextMessage(answer: Answer, row: StoreCase, sent: Set<string>, options:
   // a value the store then says is sold out is followed by the next one.
   const listed = [...reply.matchAll(/^\s*[•\-*]\s*(.+)$/gm)].map((found) => firstValue(found[1])).filter((value): value is string => Boolean(value));
   if (listed.length > 1 && /\?/.test(reply)) options.splice(0, options.length, ...listed);
-  if (/\?/.test(reply) && (listed.length > 1 || /sold out|out of stock|unavailable|isn't available/i.test(reply))) return options.find((value) => !sent.has(value)) ?? null;
+  if (/\?/.test(reply) && (listed.length > 1 || /sold out|out of stock|unavailable|isn't available/i.test(reply))) {
+    const value = options.find((one) => !sent.has(one));
+    return value ? choose(value) : null;
+  }
   return null;
 }
 
@@ -220,13 +223,19 @@ function nextMessage(answer: Answer, row: StoreCase, sent: Set<string>, options:
  * A store that is down, a call that fails or a checkout that asks for something no eval can give ends the chat with
  * the reason in `stopped`, which the eval reports as that store's failure.
  */
-export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "checkout", budgetMs = 480_000): Promise<Purchase> {
+export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "checkout", budgetMs = 480_000, from?: EveEvalTurn["session"]): Promise<Purchase> {
   const started = Date.now();
   const purchase: Purchase = { steps: [], picked: null, stopped: null, handed: null };
   const sent = new Set<string>();
   // The values of the last choice the store listed, such as its colours.
   const options: string[] = [];
-  let session: EveEvalTurn["session"] | undefined;
+  // A chat already under way goes on in its own session, so what the shopper said before still stands.
+  let session: EveEvalTurn["session"] | undefined = from;
+  // A value the shopper chooses is remembered as the value, however the row words the message that carries it.
+  const choose = (value: string) => {
+    sent.add(value);
+    return row.choiceAs ? row.choiceAs(value, purchase.picked) : value;
+  };
 
   const say = async (message: string, afterThePick = false): Promise<Step | null> => {
     sent.add(message);
@@ -276,7 +285,7 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
       break;
     }
     const seen = cards.map((card) => `${short(card.name, 50)} (${card.store ?? "no store"}, ${card.price ?? "no price"}, ${card.id ? (pages.get(card.id) ?? "no page") : "no id"})`);
-    const question = !row.cards && step.answer ? nextMessage(step.answer, row, sent, options) : null;
+    const question = !row.cards && step.answer ? nextMessage(step.answer, row, sent, options, choose) : null;
     if (!question) {
       purchase.stopped = row.cards
         ? `no card for the asked product came from the ${SUPPLIERS[row.supplier]} (${row.cards === "catalog" ? "a card that opens the catalog's link" : "a card that opens the store's own page"}). Cards shown: ${seen.join("; ") || "none"}. Agentcard said: ${short(step.answer?.reply ?? "")}`
@@ -319,7 +328,7 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
       purchase.stopped = `out of time after ${Math.round((Date.now() - started) / 60_000)} minutes, still not ${goal === "cart" ? "in a cart" : "ready to pay"}. Agentcard last said: ${short(answer.reply)}`;
       return purchase;
     }
-    const message = nextMessage(answer, row, sent, options);
+    const message = nextMessage(answer, row, sent, options, choose);
     if (!message) {
       purchase.stopped = `the checkout asked for something this shopper cannot give, or said nothing to answer${step.snapshot?.error_code ? ` (${step.snapshot.error_code})` : ""}. Agentcard said: ${short(answer.reply, 300)}`;
       return purchase;
