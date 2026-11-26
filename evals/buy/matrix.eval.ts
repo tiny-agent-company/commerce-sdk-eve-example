@@ -1,5 +1,5 @@
 import { defineEval } from "eve/evals";
-import { checkAnswer, type Expectation } from "../lib/buy.js";
+import { checkAnswer, checkWordsUnchanged, type Expectation } from "../lib/buy.js";
 
 /**
  * The coverage matrix: one shopper message per case, spread over four things the buy tool's answers vary by.
@@ -122,6 +122,7 @@ export default [...stores, ...kinds, ...verticals, ...locales].map(({ group, nam
       const turn = await t.send(expected.ask);
       t.succeeded();
       turn.calledTool("buy");
+      checkWordsUnchanged(t, turn, expected.ask);
       await checkAnswer(t, turn, expected);
     },
   }),
