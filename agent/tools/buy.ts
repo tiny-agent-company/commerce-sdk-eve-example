@@ -51,6 +51,8 @@ export default defineTool({
 
     // The links and carts reach the chat as progress snapshots; the model only reads the final result.
     const links: BuyToolLink[] = [];
+    // Products a search found past the cards it showed, which an app reveals on "show more".
+    let more: BuyToolLink[] = [];
     let results: BuyToolResult[] = [];
     let changed = () => {};
     const turn = buy.turn(input.ask as string, {
@@ -59,12 +61,16 @@ export default defineTool({
         if (item.kind === "link") links.push(item.link);
         changed();
       },
+      onFound: (found) => {
+        more = found.more;
+        changed();
+      },
       onResult: (result) => {
         results = [...results, result];
         changed();
       },
     });
-    const snapshot = () => ({ links: [...links], carts: results.at(-1)?.carts ?? [], status: results.at(-1)?.status ?? null });
+    const snapshot = () => ({ links: [...links], more: [...more], carts: results.at(-1)?.carts ?? [], status: results.at(-1)?.status ?? null });
 
     let done = false;
     const run = turn.handle(input).finally(() => {
