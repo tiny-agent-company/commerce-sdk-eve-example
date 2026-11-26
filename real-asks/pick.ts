@@ -178,7 +178,7 @@ async function main(): Promise<void> {
   let saved = 0;
   let overPerCompany = 0;
   let cardsStored = 0;
-  const toPost: { id: string; messages: string[]; reply: string }[] = [];
+  const toPost: { id: string; messages: string[]; reply: string; pickedFor: string[]; judgeNote: string }[] = [];
   for (const item of chosen) {
     if (saved >= mostSaved) break;
     const id = `real-${hash(`${item.turn.conversation.id}:${item.turn.ask.id}`)}`;
@@ -199,9 +199,9 @@ async function main(): Promise<void> {
     const shown = cardsOf(item.turn);
     if (shown?.stored) cardsStored += 1;
     if (dry || !dataset) continue;
-    // The answer the shopper got, cut to a sentence or two and cleaned, for whoever reviews the row.
+    // The answer the shopper got, word for word and cleaned, for whoever reviews the row.
     const reply = await shortReply(item.turn.replies.map((message) => message.body).join("\n\n"), removedWords([item.turn.ask.body, ...item.turn.earlier.map((message) => message.body)], item.made.messages));
-    toPost.push({ id, messages: item.made.messages, reply });
+    toPost.push({ id, messages: item.made.messages, reply, pickedFor: item.why, judgeNote: item.verdict?.note ?? "" });
     dataset.insert({
       id,
       input: { messages: item.made.messages },

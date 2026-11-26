@@ -15,7 +15,7 @@ import { firstSentences, postRows, slackTarget, type Updatable } from "./review-
 interface Row {
   id: string;
   input?: { messages?: unknown };
-  metadata?: { review?: unknown; day?: unknown; slack?: { ts?: unknown }; seen?: { reply?: unknown; judge_note?: unknown } };
+  metadata?: { review?: unknown; day?: unknown; picked_for?: unknown; slack?: { ts?: unknown }; seen?: { reply?: unknown; judge_note?: unknown } };
 }
 
 const args = process.argv.slice(2);
@@ -33,7 +33,7 @@ if (!target && !dry) {
 }
 
 const dataset = (await import("braintrust")).initDataset({ project: PROJECT, dataset: DATASET });
-const waiting: { id: string; day: string; messages: string[]; reply: string }[] = [];
+const waiting: { id: string; day: string; messages: string[]; reply: string; pickedFor: string[]; judgeNote: string }[] = [];
 for await (const row of dataset as unknown as AsyncIterable<Row>) {
   const review = String(row.metadata?.review ?? DRAFT).trim().toLowerCase();
   if (review === REVIEWED || review === REJECTED || row.metadata?.slack?.ts) continue;
@@ -42,7 +42,9 @@ for await (const row of dataset as unknown as AsyncIterable<Row>) {
   const seen = row.metadata?.seen ?? {};
   // A row saved before replies were kept has no reply; it shows the judge's one-line account of the reply in its place.
   const reply = typeof seen.reply === "string" ? seen.reply : typeof seen.judge_note === "string" && seen.judge_note ? firstSentences(seen.judge_note) : "(the reply was not kept for this row)";
-  waiting.push({ id: row.id, day: typeof row.metadata?.day === "string" ? row.metadata.day : "", messages, reply });
+  const pickedFor = Array.isArray(row.metadata?.picked_for) ? row.metadata.picked_for.filter((why): why is string => typeof why === "string") : [];
+  const judgeNote = typeof seen.judge_note === "string" ? seen.judge_note : "";
+  waiting.push({ id: row.id, day: typeof row.metadata?.day === "string" ? row.metadata.day : "", messages, reply, pickedFor, judgeNote });
 }
 waiting.sort((a, b) => b.day.localeCompare(a.day) || a.id.localeCompare(b.id));
 const rows = waiting.slice(0, Number.isFinite(limit) && limit >= 0 ? limit : waiting.length);

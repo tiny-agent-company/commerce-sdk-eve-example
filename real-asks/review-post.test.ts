@@ -1,21 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { rowsToRun, DRAFT, REJECTED, REVIEWED, type RealAsk } from "../evals/lib/real-asks.ts";
-import { firstSentences, removedWords, reviewText, slackTarget } from "./review-post.ts";
+import { firstSentences, removedWords, reviewLayout, slackTarget } from "./review-post.ts";
 
 // Every message here is made up.
-test("the review post is three lines: the shopper, the agent, and the two emoji", () => {
-  assert.equal(reviewText(["a yoga mat under $30"], "I couldn't find a yoga mat under $30. Want me to look at other stores?"), "🛒 *Shopper:* a yoga mat under $30\n🤖 *Agent:* I couldn't find a yoga mat under $30. Want me to look at other stores?\n👍 / 👎");
+test("the review post is the message sent to the agent and the two emoji; the reply and why it failed go in its thread", () => {
+  const layout = reviewLayout(["a yoga mat under $30"], "I couldn't find a yoga mat under $30.\nWant me to look at other stores?", ["nothing found", "the judge failed the answer"], "No card is a yoga mat.");
+  assert.equal(layout.post, "*Message sent to the agent:*\n>a yoga mat under $30\n👍 / 👎");
+  assert.deepEqual(layout.thread, [
+    "*Agent's reply:*\n>I couldn't find a yoga mat under $30.\n>Want me to look at other stores?",
+    "*Why the eval failed:*\n• The search found nothing.\n• The judge found the answer wrong. No card is a yoga mat.",
+  ]);
 });
 
-test("the post stays three short lines whatever the text holds", () => {
-  const text = reviewText(["running shoes", "size 10,\nin <blue> & black"], "x".repeat(900));
-  const lines = text.split("\n");
-  assert.equal(lines.length, 3);
-  assert.equal(lines[0], "🛒 *Shopper:* running shoes → size 10, in &lt;blue&gt; &amp; black");
-  assert.ok(lines[1]!.length < 260 && lines[1]!.endsWith("…"));
-  assert.equal(reviewText(["a kettle"], " ").split("\n")[1], "🤖 *Agent:* (no reply)");
-  assert.ok(reviewText(["y".repeat(900)], "ok").split("\n")[0]!.length < 300);
+test("a later message goes in the thread before the reply, and markup is escaped", () => {
+  const layout = reviewLayout(["running shoes", "size 10, in <blue> & black"], " ");
+  assert.equal(layout.post, "*Message sent to the agent:*\n>running shoes\n👍 / 👎");
+  assert.deepEqual(layout.thread, ["*Message sent to the agent:*\n>size 10, in &lt;blue&gt; &amp; black", "*Agent's reply:*\n>(no reply)"]);
 });
 
 test("keeps the first sentence or two of a reply", () => {
