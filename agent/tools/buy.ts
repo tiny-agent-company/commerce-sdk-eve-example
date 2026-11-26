@@ -38,8 +38,11 @@ export default defineTool({
   inputSchema: buyToolDefinition().input_schema,
   label: { start: ({ ask }) => `Buy: ${ask}` },
   async *execute(input, ctx) {
-    // The signed-in user is the shopper. Without auth, each session is its own shopper.
-    const externalUserId = ctx.session.auth.current?.principalId ?? `session:${ctx.session.id}`;
+    // The signed-in user is the shopper. Without auth, each session is its own shopper. Local development and the evals
+    // sign every session in as the same stand-in user, who is nobody: there too each session is its own shopper, so two
+    // chats never share a cart.
+    const user = ctx.session.auth.current;
+    const externalUserId = user && user.principalType !== "local-dev" ? user.principalId : `session:${ctx.session.id}`;
     const key = `${externalUserId}:${ctx.session.id}`;
     let buy = shoppers.get(key);
     if (!buy) {
@@ -76,8 +79,13 @@ export default defineTool({
         changed();
       },
     });
-    // `ask` is the words this call sent, which the evals read to check the shopper's words arrived unchanged.
-    const snapshot = () => ({ ask, links: [...links], more: [...more], carts: results.at(-1)?.carts ?? [], status: results.at(-1)?.status ?? null });
+    // Beside the carts, a snapshot says where the purchase stands, for an app to draw: the step the shopper takes next, why a
+    // purchase stopped, and the order's id once there is one. None of them holds a link. `ask` is the words this call sent,
+    // which the evals read to check the shopper's words arrived unchanged.
+    const snapshot = () => {
+      const last = results.at(-1);
+      return { ask, links: [...links], more: [...more], carts: last?.carts ?? [], status: last?.status ?? null, next_action: last?.next_action ?? null, decline_code: last?.decline_code ?? null, error_code: last?.error_code ?? null, order_id: last?.order_id ?? null };
+    };
 
     let done = false;
     const run = turn.handle(call).finally(() => {
