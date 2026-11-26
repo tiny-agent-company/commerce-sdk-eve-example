@@ -31,6 +31,12 @@ export interface Expectation {
   maxPrice?: number;
   /** The least a card may cost, in dollars. */
   minPrice?: number;
+  /** What a right answer looks like when it is not simply "show the thing": the reply's language, or that a store cannot be bought from. The judge reads it. */
+  context?: string;
+  /** False for things whose cards carry no price, such as a restaurant table or an event. */
+  priced?: boolean;
+  /** True when the thing asked for does not exist, so no card can be it: the cards are not graded, only the replies. */
+  nothingToFind?: boolean;
   /** True when a question back to the shopper is a right answer, as for food that needs an address first. */
   mayAsk?: boolean;
 }
@@ -151,7 +157,7 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
 
   if (!expected.mayAsk) t.check(cards, satisfies((list: Card[]) => list.length > 0, "the shopper is shown at least one product")).label("has-cards");
   if (cards.length > 0) {
-    const missing = cards.filter((card) => !card.name || !card.store || dollars(card.price) === null);
+    const missing = cards.filter((card) => !card.name || !card.store || (expected.priced !== false && dollars(card.price) === null));
     t.check(missing, satisfies((list: Card[]) => list.length === 0, `every card has a name, a store and a price (missing on: ${missing.map(line).join("; ")})`)).label("complete-cards");
     if (expected.store) {
       const others = cards.filter((card) => !expected.store!.test(card.store ?? ""));
@@ -169,7 +175,7 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
 
   const verdict = judge(expected, cards, replies, cardsNotShown(turn));
   const wrong = (v: Verdict) => v.cards.filter((card) => !card.accurate).map((card) => `card ${card.index + 1} ${cards[card.index]?.name.slice(0, 60)}: ${card.unmet.join(", ") || "not something that was asked for"}`);
-  if (cards.length > 0) {
+  if (cards.length > 0 && !expected.nothingToFind) {
     t.score(verdict.then((v) => ({ score: v.cards.filter((card) => card.accurate).length / cards.length, message: wrong(v).join("; ") || "every card is what was asked for" })))
       .label("accurate-cards")
       .gate(0.8);

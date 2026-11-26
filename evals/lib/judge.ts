@@ -51,8 +51,10 @@ const RULES = [
   "An accessory for the wanted thing is not the wanted thing, unless an accessory is what was asked for.",
   "Never count taste against a card: words such as `decent`, `nice` or `nothing fancy` break nothing.",
   "For the replies, list a false claim only when the cards contradict it: a price that differs from the card's, a product presented as shown that is on no card, a card described as something its name says it is not, or a statement that everything shown fits when cards break requirements. Opinions, tone, length and the number of questions are never false claims. The two replies may differ in what they recommend; that is not a false claim.",
+  "Read a claim for what it is about. `Everything here is inside your budget` is about prices only, and `ten options` is a count: check each against that one thing, not against the other requirements.",
   "The card numbers are this prompt's own. A reply that says `number 2` or `#1` counts in its own list, which may be in another order, so match a reply's products to cards by name and never by number.",
   "A reply may also mention a product from the list of products found but not shown; that is not a false claim, though its price must still match.",
+  "When the test's author says what a right answer looks like, hold the replies to it in `answers_the_ask`: a reply in the wrong language, or one that hides that a store or a service is not available, does not answer the ask.",
   "The replies answer the ask when, between them, they offer what was asked for, or ask the shopper for what is needed to get it, or say plainly that it was not found. They do not answer it when they ignore part of the ask, or present something else as if it were what was asked.",
 ].join("\n");
 
@@ -62,7 +64,7 @@ const RULES = [
  * it answers whose faults are known.
  */
 export async function judge(
-  expected: { ask: string; wants: Want[] },
+  expected: { ask: string; wants: Want[]; context?: string },
   cards: { name: string; store: string | null; price: string | null }[],
   replies: { agentcard: string; agent: string },
   notShown: { name: string; store: string | null; price: string | null }[] = [],
@@ -74,6 +76,7 @@ export async function judge(
     prompt: [
       `What the shopper typed: ${expected.ask}`,
       `What they want:\n${expected.wants.map((want, index) => `${index + 1}. ${want.what}. Requirements: ${want.must.map((must) => `"${must}"`).join("; ") || "none beyond being that thing"}`).join("\n")}`,
+      ...(expected.context ? [`What a right answer looks like, from the test's author: ${expected.context}`] : []),
       `Cards in the chat:\n${cards.map((card, index) => `${index + 1}. ${card.name} | ${card.store ?? "no store"} | ${card.price ?? "no price"}`).join("\n") || "(none)"}`,
       `Products found but not shown as cards:\n${notShown.map((card) => `- ${card.name} | ${card.store ?? "no store"} | ${card.price ?? "no price"}`).join("\n") || "(none)"}`,
       `Agentcard's reply: ${replies.agentcard || "(none)"}`,
