@@ -147,8 +147,8 @@ export function checkTurn(t: EveEvalContext, turn: EveEvalTurn): void {
 /**
  * Grades one answer against what the shopper asked for.
  *
- * Fixed rules cover what a rule can know exactly: the cards are complete, none repeats, each comes from the named
- * store and sits inside the budget. A judge model then reads every card against every requirement of the ask, and
+ * Fixed rules cover what a rule can know exactly: the cards are complete and each sits inside the budget. Cards from
+ * a store other than the one the shopper named pass only when the reply says first that the named store missed. A judge model then reads every card against every requirement of the ask, and
  * both replies against the cards (judge.ts), and the eval fails when:
  * - fewer than 80% of the cards are what was asked for (`accurate-cards`),
  * - one of the first three cards is not (`top-cards-accurate`),
@@ -178,10 +178,6 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
   if (cards.length > 0) {
     const missing = cards.filter((card) => !card.name || !card.store || (expected.priced !== false && dollars(card.price) === null));
     t.check(missing, satisfies((list: Card[]) => list.length === 0, `every card has a name, a store and a price (missing on: ${missing.map(line).join("; ")})`)).label("complete-cards");
-    if (expected.store) {
-      const others = cards.filter((card) => !expected.store!.test(card.store ?? ""));
-      t.check(others, satisfies((list: Card[]) => list.length === 0, `every card comes from the store the shopper named (others: ${others.map(line).join("; ")})`)).label("named-store");
-    }
     if (expected.maxPrice !== undefined || expected.minPrice !== undefined) {
       const [floor, most] = [expected.minPrice ?? 0, expected.maxPrice ?? Infinity];
       const outside = cards.filter((card) => {
@@ -193,6 +189,14 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
   }
 
   const verdict = judge(expected, cards, replies, cardsNotShown(turn));
+  if (cards.length > 0 && expected.store) {
+    // Cards from another store are a right answer only when the reply says first that the named store had nothing,
+    // could not be searched or cannot be shopped at. Shown without that, they pass for the named store's.
+    const others = cards.filter((card) => !expected.store!.test(card.store ?? ""));
+    t.score(verdict.then((v) => ({ score: others.length === 0 || v.saysNamedStoreMissed ? 1 : 0, message: others.length === 0 ? "every card comes from the store the shopper named" : `${v.saysNamedStoreMissed ? "the reply says first that the named store missed; " : "the reply does not say the named store missed; "}cards from other stores: ${others.map(line).join("; ")}` })))
+      .label("named-store")
+      .gate(1);
+  }
   const wrong = (v: Verdict) => v.cards.filter((card) => !card.accurate).map((card) => `card ${card.index + 1} ${cards[card.index]?.name.slice(0, 60)}: ${card.unmet.join(", ") || "not something that was asked for"}`);
   if (cards.length > 0 && !expected.nothingToFind) {
     t.score(verdict.then((v) => ({ score: v.cards.filter((card) => card.accurate).length / cards.length, message: wrong(v).join("; ") || "every card is what was asked for" })))
