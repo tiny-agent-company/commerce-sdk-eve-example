@@ -1,0 +1,77 @@
+import type { EveEvalResult } from "eve/evals";
+import type { EvalReporter, EveEvalCompleteContext } from "eve/evals/reporters";
+
+/** The line checkAnswer logs for each graded turn (lib/buy.ts), which this reporter turns into a row's output. */
+export const RECORD = "RECORD ";
+
+interface Experiment {
+  log(row: Record<string, unknown>): unknown;
+  summarize(): Promise<{ experimentUrl?: string }>;
+  close(): Promise<unknown>;
+}
+
+/**
+ * Saves a run to Braintrust as one experiment, one row per eval, so a row reads as the conversation it was:
+ *
+ * - Input: the messages the shopper sent, in order.
+ * - Output: for each graded turn, the product cards the shopper saw, Agentcard's reply and the chat agent's reply.
+ * - Expected: what the shopper asked for, as the requirements each card was checked against.
+ * - Scores: every check, by its name. A check recorded for more than one turn keeps its lowest score.
+ * - Metadata: the eval's id and name, its verdict, and each check that did not pass with the judge's reason.
+ *
+ * Runs only when `BRAINTRUST_API_KEY` is set.
+ */
+export function braintrustReporter(config: { projectName: string }): EvalReporter {
+  let experiment: Experiment | undefined;
+  let flush: (() => Promise<unknown>) | undefined;
+  return {
+    async onRunStart() {
+      if (!process.env.BRAINTRUST_API_KEY) return;
+      const braintrust = await import("braintrust");
+      flush = () => braintrust.flush();
+      experiment = braintrust.init({ project: config.projectName, noExitFlush: true, setCurrent: false }) as unknown as Experiment;
+    },
+    onEvalComplete(result: EveEvalResult, context?: EveEvalCompleteContext) {
+      if (!experiment) return;
+      const about = context?.evaluation;
+      const turns = (result.result.logs ?? []).filter((line) => line.startsWith(RECORD)).map((line) => JSON.parse(line.slice(RECORD.length)) as { wants?: unknown; context?: unknown; [key: string]: unknown });
+      const scores: Record<string, number> = {};
+      for (const assertion of result.assertions) {
+        if (assertion.score === undefined) continue;
+        const name = assertion.key ?? assertion.name;
+        scores[name] = Math.min(scores[name] ?? 1, assertion.score);
+      }
+      const messages = about?.metadata?.messages ?? (about?.metadata?.ask ? [about.metadata.ask] : []);
+      experiment.log({
+        id: result.attempt ? `${result.id}#${result.attempt}` : result.id,
+        input: { messages },
+        output: {
+          agent_reply: result.result.reply ?? null,
+          turns: turns.map(({ wants: _wants, context: _context, ...turn }) => turn),
+        },
+        expected: turns.map((turn) => ({ wants: turn.wants, ...(turn.context ? { right_answer: turn.context } : {}) })),
+        error: result.error,
+        scores,
+        tags: about?.tags ? [...about.tags] : undefined,
+        metadata: {
+          eval: result.id,
+          name: about?.description,
+          verdict: result.verdict,
+          tools_called: result.result.derived.toolCalls.map((call) => call.name),
+          did_not_pass: result.assertions.filter((assertion) => assertion.errored || assertion.passed === false).map((assertion) => ({ check: assertion.key ?? assertion.name, score: assertion.score, needs: assertion.threshold, why: assertion.message })),
+        },
+      });
+    },
+    async onRunComplete() {
+      if (!experiment) return;
+      try {
+        await flush?.();
+        const summary = await experiment.summarize();
+        if (summary.experimentUrl) console.log(`Braintrust experiment: ${summary.experimentUrl}\n`);
+      } finally {
+        await experiment.close();
+        experiment = undefined;
+      }
+    },
+  };
+}

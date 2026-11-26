@@ -1,5 +1,5 @@
 import { defineEvalConfig } from "eve/evals";
-import { braintrustReporter } from "eve/evals/reporters";
+import { braintrustReporter } from "./lib/braintrust-reporter.js";
 import { slackReporter } from "./lib/slack-reporter.js";
 
 export default defineEvalConfig({
@@ -10,6 +10,6 @@ export default defineEvalConfig({
   reporters: [
     slackReporter(),
     // Each run becomes an experiment in the Braintrust project "Buy evals" when BRAINTRUST_API_KEY is set.
-    ...(process.env.BRAINTRUST_API_KEY ? [braintrustReporter({ projectName: "Buy evals" })] : []),
+    braintrustReporter({ projectName: "Buy evals" }),
   ],
 });

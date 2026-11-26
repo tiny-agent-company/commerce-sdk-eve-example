@@ -1,5 +1,6 @@
 import type { EveEvalContext, EveEvalTurn } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
+import { RECORD } from "./braintrust-reporter.js";
 import { judge, type Verdict, type Want } from "./judge.js";
 
 /** A product card as the shopper sees it in the chat. */
@@ -154,6 +155,8 @@ export async function checkAnswer(t: EveEvalContext, turn: EveEvalTurn, expected
   cards.forEach((card, index) => t.log(`card ${index + 1}: ${line(card)}`));
   t.log(`Agentcard's reply: ${replies.agentcard}`);
   t.log(`The agent's reply: ${replies.agent}`);
+  // One line the Braintrust reporter reads back, so a row shows what the shopper saw on this turn.
+  t.log(RECORD + JSON.stringify({ shopper: expected.ask, cards: cards.map((card) => ({ name: card.name, store: card.store, price: card.price })), answered_from_earlier_cards: fresh.length === 0 && earlier.length > 0, agentcard_reply: replies.agentcard, agent_reply: replies.agent, wants: expected.wants, context: expected.context }));
 
   if (!expected.mayAsk) t.check(cards, satisfies((list: Card[]) => list.length > 0, "the shopper is shown at least one product")).label("has-cards");
   if (cards.length > 0) {
