@@ -8,6 +8,26 @@ interface Failure {
   reasons: string[];
 }
 
+/**
+ * Why one check failed, as a sentence. A rule written as `satisfies(...)` reports "predicate did not hold for <value>",
+ * which says nothing to a reader, so its own description is used instead, with the value on the next line.
+ */
+function reasonOf(assertion: EveEvalResult["assertions"][number]): string {
+  const message = assertion.message ?? "";
+  const described = /^satisfies\((.*)\)( \[[^\]]+\])?$/s.exec(assertion.name)?.[1];
+  if (described && (!message || message.startsWith("predicate did not hold"))) {
+    const value = message.replace(/^predicate did not hold for /, "").trim().replace(/^"|"$/g, "").replace(/…$/, "");
+    if (value && described.includes(value.slice(0, 40))) {
+      // A label written as "what should happen: what happened instead".
+      const [should, ...instead] = described.split(": ");
+      return `This did not happen: ${should!.charAt(0).toUpperCase() + should!.slice(1)}.\n   ◦ ${instead.join(": ")}`;
+    }
+    const sentence = described.charAt(0).toUpperCase() + described.slice(1);
+    return value && value !== "null" && value !== "false" && value !== "true" ? `This did not hold: ${sentence}.\n   ◦ ${value}` : `This did not hold: ${sentence}.`;
+  }
+  return message || assertion.key || assertion.name;
+}
+
 /** How many evals one run posts. Braintrust holds every one. */
 const MOST_POSTED = 25;
 
@@ -68,7 +88,7 @@ export function slackReporter(): EvalReporter {
         messages: conversationOf(result),
         reasons: [
           ...(result.error ? [`The run broke: ${result.error}`] : []),
-          ...missed.map((assertion) => assertion.message ?? assertion.key ?? assertion.name),
+          ...missed.map(reasonOf),
         ],
       });
     },
