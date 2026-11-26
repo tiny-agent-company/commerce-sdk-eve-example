@@ -90,11 +90,29 @@ Set `SLACK_BOT_TOKEN` (a bot that can post to the channel) and `SLACK_EVALS_CHAN
 
 ### Results in Braintrust
 
-Set `BRAINTRUST_API_KEY` and each run is saved as an experiment in the Braintrust project "Buy evals", one row per eval with every check as a score, so two runs can be compared side by side.
+Set `BRAINTRUST_API_KEY` and each run is saved as an experiment in the Braintrust project "Buy evals", one row per eval ([`evals/lib/braintrust-reporter.ts`](evals/lib/braintrust-reporter.ts)). A row reads as the conversation it was:
 
-### Scheduled runs
+| Column | What it holds |
+|---|---|
+| Input | The messages the shopper sent, in order. |
+| Output | For each graded turn: the product cards the shopper saw, Agentcard's reply and the chat agent's reply. |
+| Expected | What the shopper asked for, as the requirements each card was checked against. |
+| Scores | Every check by name, 1 for passed and 0 for failed; `accurate-cards` is the share of cards that are what was asked for. |
+| Metadata | The eval's name and verdict, and under `did_not_pass` each failed check with the judge's reason. |
 
-[`.github/workflows/buy-evals.yml`](.github/workflows/buy-evals.yml) runs the core set every six hours and everything, with the coverage matrix, once a day. It also runs on demand from the Actions tab. It reads the repository secrets `ANTHROPIC_API_KEY`, `AGENTCARD_CLIENT_ID`, `AGENTCARD_CLIENT_SECRET`, `SLACK_BOT_TOKEN`, `BRAINTRUST_API_KEY` and `AGNOST_ORG_ID`, and the repository variable `SLACK_EVALS_CHANNEL`.
+To see what went wrong in a run, sort by `accurate-cards` or filter on a score below 1, open a row, and read `did_not_pass` beside the cards in Output. To compare two runs, open one experiment and pick the other under Compare.
+
+### Scheduled runs on Modal
+
+[`modal_app.py`](modal_app.py) runs the evals on [Modal](https://modal.com): the core set every six hours and everything, with the coverage matrix, once a day. Each run checks out the current `main` first, so a merged change is picked up by the next run with no new deploy.
+
+```bash
+modal deploy modal_app.py            # once, and again only when modal_app.py changes
+modal run modal_app.py::core         # run the core set now
+modal run modal_app.py::everything   # run everything now
+```
+
+The keys live in the Modal secret `buy-evals`: `ANTHROPIC_API_KEY`, `AGENTCARD_CLIENT_ID`, `AGENTCARD_CLIENT_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_EVALS_CHANNEL`, `BRAINTRUST_API_KEY` and, to track conversations, `AGNOST_ORG_ID`.
 
 ## Conversation tracking with Agnost AI
 

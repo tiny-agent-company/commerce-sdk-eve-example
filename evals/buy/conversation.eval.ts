@@ -10,7 +10,7 @@ export default [
   defineEval({
     description: "conversation: narrow the search",
     tags: ["conversation"],
-    metadata: { ask: "a backpack → a waterproof one for hiking, under $50" },
+    metadata: { ask: "a backpack → a waterproof one for hiking, under $50", messages: ["a backpack", "a waterproof one for hiking, under $50"] },
     async test(t) {
       const first = await t.send("a backpack");
       first.calledTool("buy");
@@ -35,7 +35,7 @@ export default [
   defineEval({
     description: "conversation: change to a different product",
     tags: ["conversation"],
-    metadata: { ask: "a desk lamp → actually forget the lamp, I need an anti-fatigue standing desk mat instead" },
+    metadata: { ask: "a desk lamp → actually forget the lamp, I need an anti-fatigue standing desk mat instead", messages: ["a desk lamp", "actually forget the lamp, I need an anti-fatigue standing desk mat instead"] },
     async test(t) {
       const first = await t.send("a desk lamp");
       first.calledTool("buy");
@@ -54,7 +54,7 @@ export default [
   defineEval({
     description: "conversation: pick a product, and no order is placed without a yes",
     tags: ["conversation"],
-    metadata: { ask: "AA batteries from Amazon → the first one" },
+    metadata: { ask: "AA batteries from Amazon → the first one", messages: ["AA batteries from Amazon", "the first one"] },
     async test(t) {
       const first = await t.send("AA batteries from Amazon");
       first.calledTool("buy");
@@ -89,7 +89,7 @@ export default [
   defineEval({
     description: "conversation: a greeting gets an answer and no cart",
     tags: ["conversation"],
-    metadata: { ask: "hi! what can you do?" },
+    metadata: { ask: "hi! what can you do?", messages: ["hi! what can you do?"] },
     async test(t) {
       const turn = await t.send("hi! what can you do?");
       t.succeeded();
