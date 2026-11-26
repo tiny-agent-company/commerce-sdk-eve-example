@@ -55,6 +55,7 @@ npm run eval -- --tag locale # one group of the matrix: store, kind, vertical or
 npm run eval -- --exclude-tag real     # leave out the real asks that failed
 npm run eval -- --tag cart             # can each store put a product in the cart
 npm run eval -- --tag checkout         # does each store get as far as the checkout step
+npm run eval -- --tag asked-once       # is a shopper who said what they want asked again
 npm run eval -- --verbose    # also print the products and Agentcard's reply for each eval
 ```
 
@@ -65,6 +66,7 @@ npm run eval -- --verbose    # also print the products and Agentcard's reply for
 | [`evals/buy/matrix.eval.ts`](evals/buy/matrix.eval.ts) | The coverage matrix, 66 cases in four groups: `store` (one per named store and per kind of store), `kind` (kinds of ask the searches do not hold), `vertical` (food, groceries, flights, hotels, cars, tables, classes, tickets, rides, and services not built yet) and `locale` (Portuguese, Dutch, German, French, Spanish, European sizes, metric units, stores and delivery outside the US; budgets are in US dollars only for now). |
 | [`evals/buy/cart.eval.ts`](evals/buy/cart.eval.ts) | One eval per store and per supplier that can serve it: the shopper asks for one cheap product, picks a card, and the product must be in the cart, at that store, with a price and a total that adds up. See [Cart and checkout, store by store](#cart-and-checkout-store-by-store). |
 | [`evals/buy/checkout.eval.ts`](evals/buy/checkout.eval.ts) | The same rows, one step further: the purchase must reach the final cart and the ask for a yes, and the yes must be stopped at the payment with nothing ordered. The file's first comment defines "got to the checkout step" and says why it is safe. |
+| [`evals/buy/asked-once.eval.ts`](evals/buy/asked-once.eval.ts) | Eight ways a shopper who had said what they want was asked again, or shown a product that could not go in a cart: a product named in full, an answer to the store's own question, an answer sent with the price, a colour the store lists, a store listed without `www`, a card with a longer page address, a store in Canada, and a store named after another one. Each must reach a cart and never say what it used to say. |
 | [`evals/lib/stores.ts`](evals/lib/stores.ts) | The list of stores and suppliers both files run. To add a store, add a row. |
 | [`evals/lib/purchase.ts`](evals/lib/purchase.ts) | The shopper those evals play, with its placeholder address and details, and the fixed rules that check a cart. |
 | [`evals/buy/real.eval.ts`](evals/buy/real.eval.ts) | Real asks that did not get a good answer, loaded from a private Braintrust dataset when the evals run. See [Real asks that failed](#real-asks-that-failed). |

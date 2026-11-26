@@ -81,6 +81,13 @@ export interface StoreCase {
   quantity?: number;
   /** True for a booking that costs nothing, such as a restaurant table: its line shows no price. */
   free?: true;
+  /** Where the shopper has it delivered, when the store ships to another country than the placeholder address is in. Never a real person's. */
+  address?: string;
+  /**
+   * How the shopper words an answer to a store's question, such as its colour, when it is not the value alone. An app
+   * built on the Commerce SDK sends the card's line again with the value added, price included.
+   */
+  choiceAs?: (value: string, picked: { name: string; price: string | null } | null) => string;
   /** Set when neither eval can run safely or at all: the eval is skipped with this as the reason. */
   skip?: string;
   /** Set when the cart can be checked but the checkout step cannot be reached safely: only the checkout eval is skipped. */
