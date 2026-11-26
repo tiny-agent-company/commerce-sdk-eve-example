@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Day, Message } from "./read.ts";
+import { cardsOf } from "./cards.ts";
+import { readCards, type Day, type Message } from "./read.ts";
 import { picks, signsOf, turnsOf } from "./signals.ts";
 
 // Every conversation here is made up.
@@ -40,10 +41,28 @@ test("reads each sign from a conversation that shows it", () => {
   assert.deepEqual(picks(signs.s1!), ["no answer"]);
 });
 
-test("ties the stored products to the message they answer", () => {
+test("guesses the cards from the last search when the turn stored none, and only for the message that search answered", () => {
   const turns = turnsOf(day);
-  assert.equal(turns.find((made) => made.ask.id === "f1")!.products!.length, 1);
-  assert.equal(turns.find((made) => made.ask.id === "a1")!.products, null);
+  const guessed = cardsOf(turns.find((made) => made.ask.id === "f1")!)!;
+  assert.equal(guessed.cards.length, 1);
+  assert.equal(guessed.stored, false);
+  assert.equal(cardsOf(turns.find((made) => made.ask.id === "a1")!), null);
+});
+
+test("uses the cards a turn stored, whatever the last search holds", () => {
+  const stored = structuredClone(day);
+  stored.messages.find((made) => made.id === "a2")!.turn!.cards = readCards([{ title: "Trail pack 30L", store: { name: "REI" }, priceCents: 4500 }, { name: "Rain pack", merchant: "Amazon", price: "$39.99" }]);
+  const shown = cardsOf(turnsOf(stored).find((made) => made.ask.id === "a1")!)!;
+  assert.equal(shown.stored, true);
+  assert.deepEqual(shown.cards, [{ name: "Trail pack 30L", store: "REI", price: "$45.00" }, { name: "Rain pack", store: "Amazon", price: "$39.99" }]);
+});
+
+test("reads stored cards as not stored when their shape is not a list of cards", () => {
+  assert.equal(readCards(undefined), null);
+  assert.equal(readCards({ items: [] }), null);
+  assert.equal(readCards(["a name"]), null);
+  assert.equal(readCards([{ price: "$1.00" }]), null);
+  assert.deepEqual(readCards([]), []);
 });
 
 test("a checkout that failed is counted and picks nothing", () => {

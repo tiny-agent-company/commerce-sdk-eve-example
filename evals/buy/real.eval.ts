@@ -1,6 +1,6 @@
 import { defineEval } from "eve/evals";
 import { cardsShown, checkAnswer, checkWordsUnchanged, type Card } from "../lib/buy.js";
-import { loadRealAsks, REVIEWED, rowsToRun } from "../lib/real-asks.js";
+import { DATASET, draftsWaiting, loadRealAsks, REVIEWED, rowsToRun } from "../lib/real-asks.js";
 
 /**
  * Real asks that did not get a good answer, sent again. The cases are not in this file or anywhere in the repository:
@@ -8,17 +8,25 @@ import { loadRealAsks, REVIEWED, rowsToRun } from "../lib/real-asks.js";
  * where a daily job saves them with personal details removed (real-asks/pick.ts).
  *
  * Each ask is sent to the buy tool as the other evals send theirs, and its answer is graded by the same checks against
- * the requirements saved on the row. A row's requirements are a model's draft until a person marks the row `reviewed`
- * in Braintrust, and the eval's name says which it is.
+ * the requirements saved on the row. A row's requirements are a model's draft until a person sets the row's
+ * `metadata.review` to `reviewed` in Braintrust, and only reviewed rows run. REAL_ASKS_RUN_DRAFTS=1 also runs the
+ * drafts, for a run made on purpose by hand.
  *
- * At most REAL_ASKS_LIMIT rows run (30 unless set), reviewed rows first and then the newest, so the cost of a run does
- * not grow with the dataset. Without BRAINTRUST_API_KEY, or with an empty dataset, the file holds one eval that skips
- * and says why.
+ * At most REAL_ASKS_LIMIT rows run (30 unless set), the newest first, so the cost of a run does not grow with the
+ * dataset. Without BRAINTRUST_API_KEY, with an empty dataset, or while no row is reviewed, the file holds one eval
+ * that skips and says why, with the number of drafts waiting for review.
  */
 const loaded = await loadRealAsks();
 const limit = Number(process.env.REAL_ASKS_LIMIT ?? 30);
-const rows = rowsToRun(loaded.rows, Number.isFinite(limit) ? limit : 30);
-const whyNone = loaded.why ?? (rows.length === 0 ? "every row is marked rejected, or REAL_ASKS_LIMIT is 0" : undefined);
+const drafts = /^(1|true|yes)$/i.test(process.env.REAL_ASKS_RUN_DRAFTS ?? "");
+const rows = rowsToRun(loaded.rows, Number.isFinite(limit) ? limit : 30, drafts);
+const waiting = draftsWaiting(loaded.rows);
+const whyNone =
+  loaded.why ??
+  (limit <= 0
+    ? "REAL_ASKS_LIMIT is 0"
+    : `no real ask has been reviewed yet: ${waiting} draft${waiting === 1 ? " is" : "s are"} waiting for review in the Braintrust dataset "${DATASET}". Set a row's metadata.review to "reviewed" to run it, or set REAL_ASKS_RUN_DRAFTS=1 to run the drafts by hand`);
+if (rows.length > 0 && waiting > 0 && !drafts) console.log(`Real asks: ${rows.length} reviewed row${rows.length === 1 ? "" : "s"} to run; ${waiting} draft${waiting === 1 ? " is" : "s are"} waiting for review in Braintrust and will not run.`);
 
 export default rows.length === 0
   ? [

@@ -108,61 +108,93 @@ To see what went wrong in a run, sort by `accurate-cards` or filter on a score b
 
 Every message a shopper sends to the buy endpoint, and every reply, is already kept by Agentcard's backend. A daily job turns the ones that went badly into evals, so the suite grows from what real shoppers ask and not only from what we thought to write down.
 
-The asks themselves are never in this repository, which is public. They live in the Braintrust dataset "Real asks that failed" in the project "Buy evals", and [`evals/buy/real.eval.ts`](evals/buy/real.eval.ts) loads them each time the evals run. Without `BRAINTRUST_API_KEY`, or while the dataset is empty, that file holds one eval that skips and says why.
+The asks themselves are never in this repository, which is public. They live in the Braintrust dataset "Real asks that failed" in the project "Buy evals", and [`evals/buy/real.eval.ts`](evals/buy/real.eval.ts) loads them each time the evals run.
 
 **What the job does** ([`real-asks/pick.ts`](real-asks/pick.ts)), for one day of conversations:
 
-1. Reads the day's live conversations and leaves out test traffic: a company's test mode, companies the backend marks as Agentcard's own, any company, client or shopper on the skip lists, and any shopper who opened more than 40 conversations that day, which is a monitor or a benchmark ([`real-asks/read.ts`](real-asks/read.ts)).
+1. Reads the day's live conversations and leaves out test traffic ([`real-asks/read.ts`](real-asks/read.ts)):
+   - a company's test mode;
+   - companies the backend marks as Agentcard's own, unless listed in `REAL_ASKS_KEEP_COMPANIES`;
+   - any company, client or shopper on the skip lists (the merchant monitors, the load test, the eval suite's client);
+   - any shopper who opened more than 40 conversations that day, which is a monitor or a benchmark;
+   - this repository's own evals. They run with test-mode credentials, so the first rule already leaves them out, and their client's id belongs on `REAL_ASKS_SKIP_CLIENTS`. On top of both, a conversation that opens, word for word, with a message one of the eval files sends is left out whatever company or client it came through ([`real-asks/own-evals.ts`](real-asks/own-evals.ts)). A real shopper who types exactly what an eval sends is left out too, which loses nothing: that ask is already an eval.
 2. Looks for the signs of a bad answer that a fixed rule can read ([`real-asks/signals.ts`](real-asks/signals.ts)):
 
    | Sign | How it is read |
    |---|---|
    | `said it was wrong` | The shopper's next message says so: "that's not what I asked for", "wrong", "I said". |
    | `rephrased` | After a search, the shopper asks the same thing again within 15 minutes in other words. |
-   | `nothing found` | A search ran and the reply says it found nothing, or no product was stored for the message. |
+   | `nothing found` | A search ran and the reply says it found nothing, or the answer showed no product. |
    | `refused` | The answer's status is `declined` on a typed ask. |
    | `no answer` | Nothing came back at all. |
    | `checkout failed` | A cart or an order stopped short. Counted only: no eval ever places an order, so it cannot be sent again. |
    | `left after the first answer` | One message, one answer, nothing more. Counted only: most apps open a new conversation for every ask, so it says little. |
 
-3. Has a model clean each candidate and draft its requirements ([`real-asks/prepare.ts`](real-asks/prepare.ts)), then runs the evals' own judge over the answer the shopper got, when the backend still holds its products. The backend keeps a search's products in order but not which of them became cards, so the first eight stand for the cards. An answer is picked as `the judge failed the answer` when it is clearly wrong: nothing was shown, something asked for has no product that is it, fewer than half the cards are what was asked for, or the reply does not respond to the ask. A narrower miss is not picked on the judge's word alone, because the requirements it was judged against are a draft. This is the strongest sign and the only one that costs model calls, so it is capped (`REAL_ASKS_MOST_JUDGED`, 150 a day).
+3. Has a model clean each candidate and draft its requirements ([`real-asks/prepare.ts`](real-asks/prepare.ts)), then runs the evals' own judge over the answer the shopper got. An answer is picked as `the judge failed the answer` when it is clearly wrong: nothing was shown, something asked for has no product that is it, fewer than half the cards are what was asked for, or the reply does not respond to the ask. A narrower miss is not picked on the judge's word alone, because the requirements it was judged against are a draft. This is the only sign that costs model calls, so it is capped (`REAL_ASKS_MOST_JUDGED`, 150 a day).
+
+   **Which cards the judge reads** is decided in one place, `cardsOf` in [`real-asks/cards.ts`](real-asks/cards.ts). When the backend stored the cards with the turn, the judge reads those, and its verdict can be trusted. The backend is only now starting to store them, and the field's name and shape are not final: the reader looks for a list under the turn's `cards` (or the key named in `REAL_ASKS_CARDS_FIELD`) and treats anything else as "not stored". For a turn without them the job falls back to a guess: the first eight products of the conversation's last search, which may not be the cards the shopper saw. A judge verdict on guessed cards is a hint, not a finding. Each saved row says under `seen.cards_are` which of the two it was.
 4. Removes personal details. Fixed patterns replace links, email addresses, phone and card numbers, order and account ids and street addresses ([`real-asks/scrub.ts`](real-asks/scrub.ts)); the model replaces names and whatever else a pattern cannot know; the patterns then run again over the model's text. A message that needs its link, the shopper's account or a personal detail to make sense is dropped, and so is a yes, a pick or an answer to a question.
-5. Drops an ask the dataset already holds, or one worded almost the same as a kept one, and saves the rest: at most `REAL_ASKS_MOST_SAVED` (20) a day and `REAL_ASKS_MOST_PER_COMPANY` (5) from one company, the cases with the most signs first.
+5. Drops an ask the dataset already holds, or one worded almost the same as a kept one, and saves the rest as drafts: at most `REAL_ASKS_MOST_SAVED` (20) a day and `REAL_ASKS_MOST_PER_COMPANY` (5) from one company, the cases with the most signs first. Running the same day twice saves nothing twice.
 
 **What a row holds**
 
 | Field | What it holds |
 |---|---|
-| Input | The cleaned messages to send: the ask, and the earlier messages of the chat when the ask depends on them. |
-| Expected | The requirements (`wants`) in the shape the judge reads, whether a question back is a right answer, and what a right answer looks like when it is not simply showing the thing. |
-| Metadata | `review` (`draft, not reviewed` until a person changes it), `picked_for` (the signs), `day`, `kind` (retail, groceries, flights and so on), `conversation` (a hash of the conversation's id) and `seen` (the products the shopper was shown and the checks the judge failed). |
+| `input.messages` | The cleaned messages to send: the ask, and the earlier messages of the chat when the ask depends on them. |
+| `expected.wants` | The requirements, in the shape the judge reads: each thing asked for (`what`) and the facts a product must meet to be it (`must`). |
+| `expected.may_ask`, `expected.priced`, `expected.right_answer` | Whether a question back is a right answer; whether cards carry a price; and what a right answer looks like when it is not simply showing the thing. |
+| `metadata.review` | `draft, not reviewed` when the job saves the row. A person changes it to `reviewed` or `rejected`. |
+| `metadata.picked_for`, `day`, `kind` | The signs, the day of the conversation, and the kind of thing asked for (retail, groceries, flights and so on). |
+| `metadata.conversation`, `metadata.company` | Hashes of the conversation's and the company's ids. |
+| `metadata.seen` | The cards the shopper was shown, whether they are stored cards or a guess, and the checks the judge failed. |
 
-**Reviewing a row.** Requirements are a model's draft. Open the dataset in Braintrust, read a row, correct `expected.wants` if needed and set `metadata.review` to `reviewed`. Set it to `rejected` to stop a row from running; leave the row in place, so the same ask is not picked again.
+**Reviewing a row.** A row does not run until a person has reviewed it. In Braintrust, open the project "Buy evals", then Datasets, then "Real asks that failed", and open a row whose `metadata.review` reads `draft, not reviewed`.
 
-**Running them.** The real asks run with the daily run and not with the six-hourly one. One run sends at most `REAL_ASKS_LIMIT` rows (30 unless set), reviewed rows first and then the newest. In Slack a real ask that fails shows its row id and the names of the failed checks only; the ask and the answer are in Braintrust.
+1. Read `input.messages`. Check that no personal detail is left (a name, an address, a phone number, anything that points at one person), and that the last message is a shopping ask that makes sense on its own or with the earlier messages. If either fails, set `metadata.review` to `rejected`.
+2. Read `expected.wants` against the ask. Each `must` has to be something the shopper actually said, stated as one fact a product card (a name, a store and a price) could show or contradict. Remove a requirement the shopper did not state or that no card could ever show, such as "returnable". Add one that is missing. Split one that holds two facts.
+3. Check `expected.may_ask`: `true` when asking the shopper a question first is a right answer, as for food that needs a delivery address.
+4. If the thing asked for cannot exist or cannot be bought, such as a flight in a window where none flies, set `metadata.review` to `rejected`: the eval could never pass.
+5. Otherwise set `metadata.review` to `reviewed` and save. The row runs from the next daily run on.
+
+Setting `rejected` instead of deleting a row keeps the same ask from being picked again.
+
+**Running them.** The real asks run with the daily run and not with the six-hourly one, and only rows marked `reviewed` run, at most `REAL_ASKS_LIMIT` (30 unless set) a run, the newest first. Without `BRAINTRUST_API_KEY`, with an empty dataset, or while no row is reviewed, the eval skips and says why, with the number of drafts waiting. `REAL_ASKS_RUN_DRAFTS=1` also runs the drafts, for a run made on purpose by hand. In Slack a real ask that fails shows its row id and the names of the failed checks only; the ask and the answer are in Braintrust.
 
 ```bash
-npm run real-asks -- --day 2026-11-24 --dry-run   # the day's numbers, saving nothing
-npm run real-asks                                 # yesterday, saved to Braintrust
-npm run eval -- --tag real                        # run the saved asks
-npm test                                          # the cleaning patterns and the rules, on made-up messages
+npm run eval -- --tag real                            # the reviewed rows
+REAL_ASKS_RUN_DRAFTS=1 npm run eval -- --tag real     # the drafts too
+npm test                                              # the cleaning patterns, the rules and the row reader, on made-up messages
 ```
 
-The job prints numbers only and never a shopper's words. It needs `ANTHROPIC_API_KEY`, `BRAINTRUST_API_KEY` and a place to read the day from, the first of these that is set:
+**Running the job on a server.** The job is one command with no settings file: everything comes from environment variables. It has to run where the backend's database can be reached with a login that can only read.
 
-| Variable | Reads from |
-|---|---|
-| `REAL_ASKS_FILE` | A JSON file in the shape `Day` of `real-asks/read.ts`, for trying the job out. |
-| `REAL_ASKS_EXPORT_URL`, `REAL_ASKS_EXPORT_TOKEN` | An export served over HTTPS that answers `GET ?day=2026-11-24` in the same shape. Agentcard's backend has no such export yet. |
-| `REAL_ASKS_DATABASE_URL` | The backend's Postgres, with a login that can only read. Every query is read only, covers one day and has a row limit. |
+```bash
+npm ci
+npm run real-asks                                  # yesterday (UTC), saved to Braintrust
+npm run real-asks -- --day 2026-11-24              # one day
+npm run real-asks -- --day 2026-11-24 --dry-run    # the day's numbers, saving nothing
+```
 
-`REAL_ASKS_SKIP_COMPANIES`, `REAL_ASKS_SKIP_CLIENTS` and `REAL_ASKS_SKIP_SHOPPERS` take ids separated by commas, and `REAL_ASKS_MOST_PER_SHOPPER` changes the 40.
+It needs Node 24. It prints numbers only, never a shopper's words, and ends with one line: `real-asks ok: day=... conversations=... read=... asks=... prepared=... picked=... saved=... rows_in_dataset=...` and exit code 0, or `real-asks failed: ...` with the reason and the same numbers, and exit code 1 when the run broke part way or 2 when a setting is missing.
 
-[`modal_real_asks.py`](modal_real_asks.py) runs the job on Modal once a day at 14:10 UTC. It is a Modal app of its own, deployed only once its secret `buy-evals-real-asks` exists with the variables above.
+| Variable | Needed | What it is |
+|---|---|---|
+| `REAL_ASKS_DATABASE_URL` | yes, or the `PG` variables | The database's address with a read-only login, `postgres://user:password@host:5432/database`. Every query is read only, covers one day and has a row limit. |
+| `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` | instead of the address | The same, as separate variables, when that is how the server hands out the login. |
+| `REAL_ASKS_DATABASE_CA` | recommended | The path of the certificate authority file for the database (for Amazon RDS, its `global-bundle.pem`). With it the database's certificate is checked; without it the link is encrypted but the certificate is not checked. |
+| `ANTHROPIC_API_KEY` | yes | For the model that cleans the asks and for the judge. |
+| `BRAINTRUST_API_KEY` | yes, except with `--dry-run` | To read and save the dataset. |
+| `REAL_ASKS_SKIP_COMPANIES`, `REAL_ASKS_SKIP_CLIENTS`, `REAL_ASKS_SKIP_SHOPPERS` | recommended | Ids of test traffic to leave out, separated by commas: the merchant monitors' shoppers, the load test's and the store sweep's clients, the eval suite's client. |
+| `REAL_ASKS_KEEP_COMPANIES` | no | Ids of companies to read even when the backend marks them as Agentcard's own. |
+| `REAL_ASKS_MOST_PER_SHOPPER` | no | Conversations in a day above which a shopper counts as a machine. 40 unless set. |
+| `REAL_ASKS_MOST_JUDGED`, `REAL_ASKS_MOST_SAVED`, `REAL_ASKS_MOST_PER_COMPANY` | no | The day's caps: 150 asks judged, 20 rows saved, 5 from one company. |
+| `REAL_ASKS_CARDS_FIELD` | no | The key under a stored turn that holds its cards, if the backend names it something other than `cards`. |
+
+Run it once a day after 12:00 UTC, so that a follow-up sent in the twelve hours after midnight is in.
 
 ### Scheduled runs on Modal
 
-[`modal_app.py`](modal_app.py) runs the evals on [Modal](https://modal.com): the core set every six hours and everything, with the coverage matrix and the real asks that failed, once a day. Each run checks out the current `main` first, so a merged change is picked up by the next run with no new deploy.
+[`modal_app.py`](modal_app.py) runs the evals on [Modal](https://modal.com): the core set every six hours and everything, with the coverage matrix and the reviewed real asks, once a day. The job that picks the real asks does not run on Modal. Each run checks out the current `main` first, so a merged change is picked up by the next run with no new deploy.
 
 ```bash
 modal deploy modal_app.py            # once, and again only when modal_app.py changes

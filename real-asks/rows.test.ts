@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DRAFT, readRow, REJECTED, REVIEWED, rowsToRun, type RealAsk } from "../evals/lib/real-asks.ts";
+import { DRAFT, draftsWaiting, readRow, REJECTED, REVIEWED, rowsToRun, type RealAsk } from "../evals/lib/real-asks.ts";
 
 // Every row here is made up.
 const row = (id: string, review: string, day: string): RealAsk => ({ id, messages: ["a yoga mat"], wants: [{ what: "yoga mat", must: ["a yoga mat"] }], mayAsk: false, priced: true, pickedFor: [], day, kind: "retail", review });
@@ -12,9 +12,23 @@ test("reads a dataset row, and refuses one with no ask or no requirements", () =
   assert.equal(readRow({ id: "real-3", input: { messages: ["a yoga mat"] }, expected: {} }), null);
 });
 
-test("runs reviewed rows first, then the newest, never a rejected one, and no more than the limit", () => {
-  const rows = [row("a", DRAFT, "2026-01-01"), row("b", DRAFT, "2026-01-03"), row("c", REVIEWED, "2026-01-02"), row("d", REJECTED, "2026-01-04")];
-  assert.deepEqual(rowsToRun(rows, 10).map((made) => made.id), ["c", "b", "a"]);
-  assert.deepEqual(rowsToRun(rows, 2).map((made) => made.id), ["c", "b"]);
+const rows = [row("a", DRAFT, "2026-01-01"), row("b", DRAFT, "2026-01-03"), row("c", REVIEWED, "2026-01-02"), row("d", REJECTED, "2026-01-04"), row("e", REVIEWED, "2026-01-05")];
+
+test("runs only reviewed rows, the newest first, and no more than the limit", () => {
+  assert.deepEqual(rowsToRun(rows, 10).map((made) => made.id), ["e", "c"]);
+  assert.deepEqual(rowsToRun(rows, 1).map((made) => made.id), ["e"]);
   assert.deepEqual(rowsToRun(rows, 0), []);
+  assert.equal(draftsWaiting(rows), 2);
+});
+
+test("runs drafts too when asked, after the reviewed rows, and never a rejected one", () => {
+  assert.deepEqual(rowsToRun(rows, 10, true).map((made) => made.id), ["e", "c", "b", "a"]);
+});
+
+test("reads any review value it does not know as a draft, so a typo never makes a row run", () => {
+  const read = (review: unknown) => readRow({ id: "r", input: { messages: ["a yoga mat"] }, expected: { wants: [{ what: "yoga mat", must: [] }] }, metadata: { review } })!.review;
+  assert.equal(read("Reviewed "), REVIEWED);
+  assert.equal(read("rejected"), REJECTED);
+  assert.equal(read("looks fine"), DRAFT);
+  assert.equal(read(undefined), DRAFT);
 });

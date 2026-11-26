@@ -10,7 +10,11 @@ import type { Want } from "./judge.js";
 export const PROJECT = "Buy evals";
 export const DATASET = "Real asks that failed";
 
-/** A row's requirements were written by a model and nobody has checked them yet. */
+/**
+ * The values of a row's `metadata.review`, the one field a reviewer changes in Braintrust's dataset screen.
+ * This one: the row's requirements were written by a model and nobody has checked them yet. Any value that is neither
+ * `reviewed` nor `rejected` reads as this one, so a typo never makes a row run.
+ */
 export const DRAFT = "draft, not reviewed";
 /** A person has read the row and its requirements are right. */
 export const REVIEWED = "reviewed";
@@ -66,7 +70,7 @@ export function readRow(row: Row): RealAsk | null {
     pickedFor: Array.isArray(row.metadata?.picked_for) ? row.metadata.picked_for.map(String) : [],
     day: typeof row.metadata?.day === "string" ? row.metadata.day : "",
     kind: typeof row.metadata?.kind === "string" ? row.metadata.kind : "other",
-    review: typeof row.metadata?.review === "string" ? row.metadata.review : DRAFT,
+    review: [REVIEWED, REJECTED].includes(String(row.metadata?.review).trim().toLowerCase()) ? String(row.metadata?.review).trim().toLowerCase() : DRAFT,
   };
 }
 
@@ -93,13 +97,20 @@ export async function loadRealAsks(): Promise<{ rows: RealAsk[]; unreadable: num
 }
 
 /**
- * The rows one run sends, at most `limit`, so a day's cost stays bounded however long the dataset grows. Rejected rows
- * never run. Reviewed rows go first, since their requirements are trusted; then the newest drafts.
+ * The rows one run sends, at most `limit`, so a day's cost stays bounded however long the dataset grows. Only rows a
+ * person marked `reviewed` run: a draft's requirements were written by a model, and an eval that fails against wrong
+ * requirements says nothing. `drafts` also runs the rows nobody has reviewed yet, for a run made on purpose by hand;
+ * reviewed rows still go first, then the newest. Rejected rows never run.
  */
-export function rowsToRun(rows: RealAsk[], limit: number): RealAsk[] {
+export function rowsToRun(rows: RealAsk[], limit: number, drafts = false): RealAsk[] {
   const order = (row: RealAsk) => (row.review === REVIEWED ? 0 : 1);
   return rows
-    .filter((row) => row.review !== REJECTED)
+    .filter((row) => row.review === REVIEWED || (drafts && row.review !== REJECTED))
     .sort((a, b) => order(a) - order(b) || b.day.localeCompare(a.day) || a.id.localeCompare(b.id))
     .slice(0, Math.max(0, limit));
+}
+
+/** How many rows wait for a person to review them. */
+export function draftsWaiting(rows: RealAsk[]): number {
+  return rows.filter((row) => row.review === DRAFT).length;
 }

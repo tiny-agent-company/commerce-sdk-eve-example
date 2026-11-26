@@ -1,4 +1,5 @@
-import type { Conversation, Day, Message } from "./read.ts";
+import { cardsOf } from "./cards.ts";
+import type { Conversation, Day, Message, Product } from "./read.ts";
 import { alike, meaning } from "./scrub.ts";
 
 /**
@@ -17,8 +18,8 @@ export interface Turn {
   replies: Message[];
   /** The shopper's next message, or null when this is the last. */
   next: Message | null;
-  /** The products the answer showed, when the backend still holds them: it keeps only the conversation's last search. */
-  products: Conversation["products"] | null;
+  /** The products of the conversation's last search, when this is the message that search answered; null otherwise. Read through `cardsOf` (cards.ts). */
+  lastSearch: Product[] | null;
 }
 
 export type Sign = "no answer" | "refused" | "nothing found" | "rephrased" | "said it was wrong" | "left after the first answer" | "checkout failed";
@@ -45,7 +46,7 @@ export function turnsOf(day: Day): Turn[] {
         earlier: asks.slice(0, index),
         replies: messages.filter((message) => message.role === "agent" && message.at >= ask.at && (!next || message.at < next.at)),
         next,
-        products: conversation.productsFor === ask.id ? conversation.products : null,
+        lastSearch: conversation.productsFor === ask.id ? conversation.products : null,
       });
     });
   }
@@ -72,7 +73,7 @@ export function signsOf(turn: Turn, failedCheckout: boolean): Sign[] {
   if (checkout || failedCheckout) signs.push("checkout failed");
   else if (typed && handed.some((answer) => answer.status === "declined")) signs.push("refused");
   // A search that stored no products for this message, or a reply that says it found nothing.
-  if (typed && searched && !checkout && (NOT_FOUND.test(text) || (turn.products !== null && turn.products.length === 0))) signs.push("nothing found");
+  if (typed && searched && !checkout && (NOT_FOUND.test(text) || cardsOf(turn)?.cards.length === 0)) signs.push("nothing found");
   if (typed && turn.next && !turn.next.tapped) {
     const soon = Date.parse(turn.next.at) - Date.parse(turn.ask.at) <= 15 * MINUTES;
     // The same thing asked again in other words: at least half the meaning words shared, and more than a word or two.
