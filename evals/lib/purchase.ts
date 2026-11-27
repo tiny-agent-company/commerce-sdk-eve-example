@@ -1,14 +1,15 @@
 import { AgentcardClient } from "@agent-cards/commerce-sdk";
 import type { EveEvalContext, EveEvalTurn } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
-import { RECORD } from "./braintrust-reporter.js";
-import { buyCalls, cardsShown, checkTurn, checkWordsUnchanged, dollars, lastAnswer, type Card } from "./buy.js";
+import { RECORD } from "./braintrust-reporter.ts";
+import { buyCalls, cardsShown, checkTurn, checkWordsUnchanged, dollars, lastAnswer, type Card } from "./buy.ts";
 import { ChatBroke, deliver, type Chat } from "./connection.ts";
 import { cardDays, daysIn, inWindow } from "./dates.ts";
 import { OUTCOME, type Outcome } from "./outcome.ts";
-import { inlineChoice, namesAnotherColor, namesAnotherSize, pickValue, saidValue, showsColor, showsSize, unfairQuestions, valueOf, type Group } from "./questions.ts";
-import { amountsIn, needsAccount, offersAnotherStore, storeAnswerOf, type StoreAnswer } from "./store-answer.ts";
-import { SUPPLIERS, type StoreCase } from "./stores.js";
+import { askedNotOffered, inlineChoice, namesAnotherColor, namesAnotherSize, offersThePagesOptions, pickValue, saidValue, showsColor, showsSize, unfairQuestions, valueOf, type Group } from "./questions.ts";
+import { amountsIn, asksPasswordInChat, needsAccount, noRoomByCode, storeAnswerOf, type StoreAnswer } from "./store-answer.ts";
+import { testAccountAt } from "./store-accounts.ts";
+import { SUPPLIERS, type StoreCase } from "./stores.ts";
 
 /**
  * The shopper the cart and checkout evals play: it asks for a product, picks one card, and then answers what the
@@ -163,10 +164,12 @@ export interface Purchase {
   /** The store's own answer that ended the chat: its own kind of result, never a failure (lib/store-answer.ts). */
   storeAnswer: StoreAnswer | null;
   /**
-   * Set when the store asked for the shopper's own account before any cart: how many questions the shopper had already
-   * answered since their pick, and whether the reply offers the product at another store instead.
+   * Set when the store asked for the shopper's own account at that store before any cart: how many questions the shopper
+   * had already answered since their pick, and what Agentcard said.
    */
-  signIn: { questionsBefore: number; anotherStore: boolean; anotherStoreReadFrom: string | null; said: string } | null;
+  signIn: { questionsBefore: number; said: string } | null;
+  /** The cards the shopper picked before the one they picked last, because the store did not sell them in the colour or size asked. */
+  switchedFrom: Card[];
   /** Each message the example chat app answered itself, without the buy tool. Counted apart from Agentcard's failures. */
   appMistakes: { said: string; reply: string }[];
   /** True when the example chat app answered so many messages itself that the chat was given up. */
@@ -286,6 +289,8 @@ interface Said {
   reasked: (line: string) => void;
   /** Why the shopper cannot answer the last question, when they cannot: the colour or the size they asked for is not offered. */
   cannot?: string;
+  /** Set with `cannot` when the reason is that the product picked is not sold in the colour or the size the shopper asked for. */
+  notOffered?: true;
   /** The card the shopper picked, once they picked one. */
   picked: () => Card | null;
 }
@@ -385,6 +390,7 @@ const OFFERS_TO_RETRY = /(want me to|should i|shall i) (try|give) (it|that|this|
 function nextMessage(answer: Answer, row: StoreCase, said: Said): string | null {
   const reply = answer.reply;
   said.cannot = undefined;
+  said.notOffered = undefined;
   const { sent, options, choose } = said;
   const words = said.words();
   const address = row.address ?? said.contacts[0]!.address;
@@ -414,15 +420,39 @@ function nextMessage(answer: Answer, row: StoreCase, said: Said): string | null 
           : null;
     if (!asked || asked.has) return false;
     said.cannot = `the product the shopper picked is not offered in ${asked.value}, which they asked for: the store lists ${values.slice(0, 8).join(", ")}`;
+    said.notOffered = true;
     return true;
+  };
+  // The value of a choice that fits what the shopper asked for: the colour asked for in whatever words the store lists
+  // it ("Jet Black" for black), the size asked for, else the value they named, else the first the store lists.
+  const fitting = (group: Group): string | undefined => {
+    const values = group.options.map(valueOf).filter(Boolean);
+    if (row.color && /colou?r/i.test(group.name)) {
+      const color = values.find((value) => showsColor(value, row.color!));
+      if (color) return color;
+    }
+    if (row.size && /\bsizes?\b/i.test(group.name)) {
+      const size = values.find((value) => showsSize(value, row.size!) || saidValue(value, row.size!));
+      if (size) return size;
+    }
+    return pickValue(group, words, tried);
   };
   if (answer.choice?.groups.length) {
     if (unfairQuestions(answer.choice.groups, "").some((line) => line.includes("placeholder for a name"))) return null;
     const groups = answer.choice.groups.filter((group) => group.required);
     const answering = groups.length > 0 ? groups : answer.choice.groups.slice(0, 1);
     if (answering.some((group) => notListed(group.name, group.options.map(valueOf)))) return null;
-    const message = answering.map((group) => pickValue(group, words, tried)).filter(Boolean).join(", ");
+    const message = answering.map(fitting).filter(Boolean).join(", ");
     if (message && !tried.has(message)) return give(message);
+  }
+  // "This shirt comes in black in S, L and XL. M is sold out. Which one, or should I look for another shirt?": the page's
+  // real options, without the colour or the size the shopper asked for. A shopper who asked for a medium takes no other
+  // size, so they have nothing to answer here, and pick another card that fits instead (see `shop`).
+  const missing = askedNotOffered(reply, row);
+  if (missing) {
+    said.cannot = `the product the shopper picked is not offered in ${missing}, which they asked for. Agentcard said: ${short(reply, 200)}`;
+    said.notOffered = true;
+    return null;
   }
   // The address read back: "Is it 1 Ferry Plz, San Francisco, CA 94111? Say yes, or send me the right address."
   if (/say yes,? or (send|tell|give)/i.test(reply) || /^is (it|that) .+\?/i.test(reply.trim())) return row.kind === "booking" ? null : "yes";
@@ -445,14 +475,15 @@ function nextMessage(answer: Answer, row: StoreCase, said: Said): string | null 
   const inline = inlineChoice(reply);
   if (inline) {
     if (notListed(inline.name, inline.options.map(valueOf))) return null;
-    const value = pickValue(inline, words, tried);
+    const value = fitting(inline);
     if (value && !tried.has(value)) return give(value);
   }
   // "Want me to add it to your cart?", or the same product at the price the store now shows: yes, while no cart exists.
-  // This is never the yes that pays, which is only asked for over a cart.
+  // This is never the yes that pays, which is only asked for over a cart. A booking too: "Do you want me to add the King
+  // Room?" holds the room with its price, and books nothing (2026-11-27, a hotel run ended on this question).
   // An offer at another store than the one the shopper named is never taken: the chat then ends with no card at the
   // named store, which is what happened.
-  if (!answer.cart && row.kind !== "booking" && OFFERS_TO_ADD.test(reply) && !/which (one|size|colou?r)/i.test(reply)) {
+  if (!answer.cart && OFFERS_TO_ADD.test(reply) && !/which (one|size|colou?r)/i.test(reply)) {
     const sentences = reply.split(/(?<=[.?!])\s+|\n+/);
     const asks = sentences.findIndex((sentence) => OFFERS_TO_ADD.test(sentence) || /do you want/i.test(sentence));
     // The store an offer is at is the last one the reply names up to the question: "The closest swap is the tee at
@@ -486,7 +517,8 @@ function nextMessage(answer: Answer, row: StoreCase, said: Said): string | null 
     options.splice(0, options.length, ...listed);
   }
   if (/\?/.test(reply) && (listed.length > 1 || /sold out|out of stock|unavailable|isn't available/i.test(reply))) {
-    const value = options.find((one) => !sent.has(one) && saidValue(one, words)) ?? options.find((one) => !sent.has(one));
+    const fits = (one: string) => (row.color ? showsColor(one, row.color) : false) || (row.size ? showsSize(one, row.size) : false) || saidValue(one, words);
+    const value = options.find((one) => !sent.has(one) && fits(one)) ?? options.find((one) => !sent.has(one));
     return value ? choose(value) : null;
   }
   // "What size would you like?" with no sizes listed: a question about a choice the product has, which is fair and gets
@@ -512,7 +544,7 @@ export function stillWorking(step: Step): boolean {
   const code = step.snapshot?.error_code;
   if (code === "turn_timeout" || code === "turn_in_progress" || step.snapshot?.turn_continues === true || answer.cart_building) return true;
   if (answer.reply.trim() === "") return true;
-  return !answer.reply.includes("?") && /still working|still (checking|building|filling|getting|adding|loading|going through)|working on (it|this|that|your)|give me a (moment|minute|few)|one moment|hang tight|hold tight|i'll (message|let you know|update you|post|send)/i.test(answer.reply);
+  return !answer.reply.includes("?") && /still working|still (checking|building|filling|getting|adding|loading|going through|being priced)|being priced|working on (it|this|that|your)|give me a (moment|minute|few)|one moment|hang tight|hold tight|i'll (message|let you know|update you|post|send)/i.test(answer.reply);
 }
 
 /**
@@ -524,15 +556,15 @@ export function stillWorking(step: Step): boolean {
  * - It reached the goal: nothing is set.
  * - Agentcard could not go on, or asked for something no eval can give: the reason is in `stopped`, which the eval
  *   reports as that store's failure.
- * - The store's own answer (out of stock, another price, no seats): `storeAnswer`, its own kind of result.
- * - The store wants the shopper's own account before any cart: `signIn`, which is the store's own answer only when the
- *   sign-in came first and another store was offered (see `checkChat`).
+ * - The store's own answer (out of stock, another price, no seats, slow to price): `storeAnswer`, its own kind of result.
+ * - The store wants the shopper's own account before any cart: `signIn`, which is the store's own answer when the
+ *   sign-in came first and the evals have no test account at that store (see `checkChat`).
  * - The example chat app kept answering the shopper itself: `appGaveUp`. Each time it did is in `appMistakes`.
  * - The connection dropped and the one retry did not bring an answer: `broke`.
  */
 export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "checkout", budgetMs = 600_000, from?: EveEvalTurn["session"]): Promise<Purchase> {
   const started = Date.now();
-  const purchase: Purchase = { steps: [], picked: null, stopped: null, handed: null, storeAnswer: null, signIn: null, appMistakes: [], appGaveUp: false, broke: null, cards: [], unfair: [], reasked: [], say: async () => null };
+  const purchase: Purchase = { steps: [], picked: null, stopped: null, handed: null, storeAnswer: null, signIn: null, switchedFrom: [], appMistakes: [], appGaveUp: false, broke: null, cards: [], unfair: [], reasked: [], say: async () => null };
   // A chat already under way goes on in its own session, so what the shopper said before still stands.
   let session: EveEvalTurn["session"] | undefined = from;
   // Where the chat's stream stood before the last message went out, so a dropped connection can read on from there.
@@ -612,7 +644,8 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     // Every choice an answer asks for is held against what the shopper has already said (lib/questions.ts).
     const inline = inlineChoice(step.answer.reply);
     const groups = step.answer.choice?.groups.length ? step.answer.choice.groups : inline ? [inline] : [];
-    for (const line of unfairQuestions(groups, saidSoFar())) purchase.unfair.push(`after "${short(message, 60)}" ${line}`);
+    // A reply that goes back to the shopper because what they asked for is not offered asks fairly, whatever it asks.
+    if (!offersThePagesOptions(step.answer.reply)) for (const line of unfairQuestions(groups, saidSoFar())) purchase.unfair.push(`after "${short(message, 60)}" ${line}`);
     return { step, app: false };
   };
 
@@ -663,28 +696,38 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
   let step = await say(row.ask);
   if (!step) return purchase;
 
+  // A card is picked only when it is the product, at the store the shopper named, with a price to pay (a table is free),
+  // with room when it says whether it has any, for the days asked, and not in another colour or size than asked.
+  const fits = (card: ShownCard) =>
+    row.product.test(card.name) &&
+    (row.free === true || dollars(card.price) !== null) &&
+    (row.maxPrice === undefined || (dollars(card.price) ?? 0) <= row.maxPrice) &&
+    (!row.at || (card.store !== null && row.at.test(card.store))) &&
+    card.availability !== "unavailable" &&
+    (!row.window || cardDays({ field: card.date, page: card.url, name: card.name }).days.every((day) => inWindow(day, row.window!))) &&
+    (!row.color || !namesAnotherColor(card.name, row.color)) &&
+    (!row.size || !namesAnotherSize(card.name, row.size));
+  // A row that names a supplier's cards takes only those. Any other row takes the first card that is the product, one
+  // that names the colour asked for before one that names none, and one that opens the store's own page before one from
+  // the catalog. Cards already picked and not sold as asked are left out.
+  const choose = (cards: ShownCard[]): ShownCard | undefined => {
+    const open = cards.filter((card) => !purchase.switchedFrom.some((before) => before === card || (before.id !== null && before.id === card.id)) && card !== purchase.picked);
+    const ranked = row.color ? [...open.filter((card) => showsColor(card.name, row.color!)), ...open.filter((card) => !showsColor(card.name, row.color!))] : open;
+    return row.cards ? ranked.find((card) => fits(card) && card.page === row.cards) : (ranked.find((card) => fits(card) && card.page === "store page") ?? ranked.find(fits));
+  };
+
   // Pick a card, unless an answer already put the product in a cart. A question that comes before any card is answered
   // first: the delivery address for food, or "want me to add it to your cart?" when the reply names the product and
   // shows no card for it.
   for (let asked = 0; asked < 4 && !step.answer?.cart && !purchase.picked; asked++) {
     const cards = shownCards(step.turn);
     if (cards.length > 0) purchase.cards = cards;
-    // A card is picked only when it is the product, at the store the shopper named, with a price to pay (a table is
-    // free), with room when it says whether it has any, for the days asked, and not in another colour or size than asked.
-    const fits = (card: ShownCard) =>
-      row.product.test(card.name) &&
-      (row.free === true || dollars(card.price) !== null) &&
-      (row.maxPrice === undefined || (dollars(card.price) ?? 0) <= row.maxPrice) &&
-      (!row.at || (card.store !== null && row.at.test(card.store))) &&
-      card.availability !== "unavailable" &&
-      (!row.window || cardDays({ field: card.date, page: card.url, name: card.name }).days.every((day) => inWindow(day, row.window!))) &&
-      (!row.color || !namesAnotherColor(card.name, row.color)) &&
-      (!row.size || !namesAnotherSize(card.name, row.size));
-    // A row that names a supplier's cards takes only those. Any other row takes the first card that is the product,
-    // one that names the colour asked for before one that names none, and one that opens the store's own page before
-    // one from the catalog.
-    const ranked = row.color ? [...cards.filter((card) => showsColor(card.name, row.color!)), ...cards.filter((card) => !showsColor(card.name, row.color!))] : cards;
-    const pick = row.cards ? ranked.find((card) => fits(card) && card.page === row.cards) : (ranked.find((card) => fits(card) && card.page === "store page") ?? ranked.find(fits));
+    // A booking whose search found nothing bookable in the dates asked says so in its code, which is read first.
+    if (row.kind === "booking" && noRoomByCode(codeOf(step))) {
+      purchase.storeAnswer = storeAnswerOf({ code: codeOf(step), reply: step.answer?.reply ?? "", booking: true });
+      return purchase;
+    }
+    const pick = choose(cards);
     if (pick) {
       purchase.picked = pick;
       break;
@@ -721,8 +764,10 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     t.log(`the agent passed the picked card's id: ${ids.includes(purchase.picked.id) ? "yes" : `no (it passed: ${ids.join(", ") || "none"})`}`);
   }
 
-  // Answer what the checkout asks, a few messages at most.
-  for (let asked = 0; asked < 10 && !reached(step.answer); asked++) {
+  // Answer what the checkout asks, a few messages at most. Waiting for a store's total is not an answer, and has its own limit.
+  let pricingSince: number | null = null;
+  const waitedForPrice: Step[] = [];
+  for (let asked = 0; asked < 10 && !reached(step.answer); ) {
     const answer = step.answer!;
     const code = codeOf(step);
     // A step the shopper takes outside the chat ends it here: no eval opens a payment page or signs in to a store.
@@ -733,13 +778,15 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     }
     if (needsAccount({ code, nextAction: answer.next_action, links })) {
       purchase.handed = "sign-in";
-      // Before any cart, this is the store's own answer only when it came first and with another store to buy at.
+      // Before any cart, the store wants the shopper's own account there. What that means is decided in `checkChat`.
       if (!cartStep(purchase)) {
-        const others = [...(answer.products ?? []).map((product) => product.store), ...(answer.stores ?? []).map((store) => store.name)].filter((store) => Boolean(store) && row.at !== undefined && !row.at.test(store));
-        const another = offersAnotherStore(answer.reply, [...new Set(others)]);
         const answers = purchase.steps.slice(pickedAt + 1).filter((one) => one.why === undefined).length;
-        purchase.signIn = { questionsBefore: answers, anotherStore: another.offered, anotherStoreReadFrom: another.readFrom, said: short(answer.reply, 300) };
+        purchase.signIn = { questionsBefore: answers, said: short(answer.reply, 300) };
       }
+      return purchase;
+    }
+    if (row.kind === "booking" && noRoomByCode(code)) {
+      purchase.storeAnswer = storeAnswerOf({ code, reply: answer.reply, booking: true });
       return purchase;
     }
     const own = () => storeAnswerOf({ code, reply: answer.reply, booking: row.kind === "booking", priceChanged: Boolean(answer.cart?.price_change) && answer.status === "declined" });
@@ -748,14 +795,45 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
       if (!purchase.storeAnswer) purchase.stopped = `Agentcard stopped with "${answer.status}"${code ? ` (${code})` : ""} before ${goal === "cart" ? "a cart existed" : "the purchase was ready to pay"}: ${short(answer.reply)}`;
       return purchase;
     }
+    // The store is still pricing the cart, and nothing asks the shopper anything: they wait for its total, asking for an
+    // update every half minute, as the checkout eval does after the yes. The wait has its own limit, not the chat's.
+    const asksAnything = answer.reply.includes("?") || (answer.choice?.groups.length ?? 0) > 0 || (answer.next_action !== null && answer.next_action !== "none");
+    const offersToWait = KEEP_WAITING.test(answer.reply) && Boolean(answer.cart?.items.length);
+    if (goal === "checkout" && !readyForTheYes(answer) && (offersToWait || (stillPricing(answer) && !asksAnything))) {
+      pricingSince ??= Date.now();
+      waitedForPrice.push(step);
+      if (Date.now() - pricingSince > PRICING_WITHIN_MS) {
+        purchase.storeAnswer = slowToPrice(waitedForPrice, Date.now() - pricingSince, "before the yes");
+        if (!purchase.storeAnswer) purchase.stopped = `the store had still not priced the cart ${Math.round((Date.now() - pricingSince) / 60_000)} minutes later, and Agentcard did not keep the shopper told and offer to keep waiting or to try another store. It last said: ${short(answer.reply, 240)}`;
+        return purchase;
+      }
+      await t.sleep(30_000);
+      step = await say(offersToWait ? "keep waiting" : ANY_UPDATE, true, "waiting");
+      if (!step) return purchase;
+      continue;
+    }
+    pricingSince = null;
+    waitedForPrice.length = 0;
+    asked++;
     if (Date.now() - started > budgetMs) {
       purchase.stopped = `out of time after ${Math.round((Date.now() - started) / 60_000)} minutes, still not ${goal === "cart" ? "in a cart" : "ready to pay"}. Agentcard last said: ${short(answer.reply)}`;
       return purchase;
     }
     const message = nextMessage(answer, row, said);
     if (!message) {
+      // The product picked is not sold in the colour or the size the shopper asked for: a person picks another card that
+      // fits from those they were shown, and the chat goes on with it. It fails only when no other card fits.
+      const other = said.notOffered && purchase.picked && purchase.switchedFrom.length < 2 ? choose(purchase.cards) : undefined;
+      if (other) {
+        t.log(`the store does not sell "${short(purchase.picked!.name, 60)}" as asked, so the shopper picks another card: ${short(other.name, 60)} (${other.store}, ${other.price})`);
+        purchase.switchedFrom.push(purchase.picked!);
+        purchase.picked = other;
+        step = await say(`That one doesn't come in what I asked for. I'll take this one instead: ${other.name}${other.price ? `, ${other.price}` : ""}`, true);
+        if (!step) return purchase;
+        continue;
+      }
       purchase.storeAnswer = own();
-      if (!purchase.storeAnswer) purchase.stopped = `${said.cannot ?? "the checkout asked for something this shopper cannot give, or said nothing to answer"}${code ? ` (${code})` : ""}. Agentcard said: ${short(answer.reply, 300)}`;
+      if (!purchase.storeAnswer) purchase.stopped = `${said.cannot ?? "the checkout asked for something this shopper cannot give, or said nothing to answer"}${said.notOffered ? `, and no other card shown fits the ask${purchase.switchedFrom.length ? ` (the shopper had already switched from ${purchase.switchedFrom.map((card) => `"${short(card.name, 50)}"`).join(", ")})` : ""}` : ""}${code ? ` (${code})` : ""}. Agentcard said: ${short(answer.reply, 300)}`;
       return purchase;
     }
     step = await say(message, true);
@@ -785,7 +863,39 @@ export function stillPricing(answer: Answer | null): boolean {
   if (answer?.status !== "needs_input" || !answer.cart) return false;
   if (answer.cart.pricing === true) return true;
   if (answer.next_action === "confirm" && answer.cart.total_is_estimate && !ASKS_FOR_YES.test(answer.reply)) return true;
-  return /still (pricing|working out|waiting|hasn't)|(is|has been) pricing|hasn't sent (its|the) (final )?(total|price)|isn't final yet|no final total yet|waiting (for|on) .{0,40}(total|price)/i.test(answer.reply);
+  return /still (pricing|working out|waiting|hasn't|being priced)|(is|has been|are|being) (being )?priced\b|(is|has been) pricing|hasn't sent (its|the) (final )?(total|price)|isn't final yet|no final total yet|waiting (for|on) .{0,40}(total|price)/i.test(answer.reply);
+}
+
+/** How long the shopper waits for a store to price their order, asking for an update every half minute. */
+export const PRICING_WITHIN_MS = 10 * 60_000;
+
+/** Agentcard's offer to keep waiting for a store's total, which a shopper who waits takes. */
+export const KEEP_WAITING = /\bkeep waiting\b/i;
+
+/** An offer, while a store prices, of another way on: to keep waiting, or to try another store. */
+const OFFERS_ANOTHER_WAY = /\bkeep waiting\b|\b(another|other|a different) (store|seller|retailer|shop)\b|\bsomewhere else\b|\belsewhere\b/i;
+
+/** Words that say a store could not price the order at all. */
+const COULD_NOT_PRICE = /\b(couldn't|could not|can't|cannot|unable to|wasn't able to|was not able to)\b[^.?!]{0,40}\b(price|get (a|its|the) (final )?(total|price)|read (a|its|the) total)\b|\b(didn't|did not|never) (send|sent|give|gave)\b[^.?!]{0,20}\b(a|its|the) (final )?total\b/i;
+
+/**
+ * The store's own answer "the store was slow to price", when a store sent no total in the time the shopper waited and
+ * Agentcard kept them told all along: every answer while they waited said something, and one offered to keep waiting or
+ * to try another store. Null when Agentcard left the shopper with nothing to go on, which stays a failure, or when the
+ * last answer is not a store still pricing or unable to price. `steps` are the answers the shopper read while waiting.
+ */
+export function slowToPrice(steps: readonly Step[], waitedMs: number, when: "before the yes" | "after the yes"): StoreAnswer | null {
+  const answers = steps.map((step) => step.answer).filter((answer): answer is Answer => answer !== null);
+  const last = answers.at(-1);
+  if (!last) return null;
+  if (!stillPricing(last) && !KEEP_WAITING.test(last.reply) && !COULD_NOT_PRICE.test(last.reply)) return null;
+  const told = answers.every((answer) => answer.reply.trim() !== "") && answers.some((answer) => OFFERS_ANOTHER_WAY.test(answer.reply));
+  if (!told) return null;
+  return {
+    what: "the store was slow to price",
+    read_from: last.cart?.pricing === true ? "the answer's fields" : "the reply's words",
+    said: `${short(last.reply, 260)} (no total from the store ${Math.round(waitedMs / 60_000)} minutes into the wait, ${when})`,
+  };
 }
 
 /** The last step of the chat that shows a cart. */
@@ -887,6 +997,53 @@ export function checkTotalNeverMovesSilently(t: EveEvalContext, purchase: Purcha
   t.check(silent, satisfies((moves: string[]) => moves.length === 0, `the total never changes without the reply saying so (${silent.join("; ") || "it never did"})`)).label("total-never-moves-silently");
 }
 
+/** Every amount one cart carries, in cents: its total, the most the card is held for, its lines, fees and summary. */
+function amountsOf(cart: Cart): number[] {
+  const all = [
+    cart.total,
+    cart.store_total,
+    cart.max_charge,
+    cart.fees,
+    ...cart.items.flatMap((item) => [item.price, item.line_total]),
+    cart.breakdown?.subtotal,
+    cart.breakdown?.shipping,
+    cart.breakdown?.tax,
+    cart.breakdown?.discount,
+    cart.price_change?.card_price,
+    cart.price_change?.store_price,
+  ].map((price) => cents(price ?? null));
+  const amounts = all.filter((amount): amount is number => amount !== null).map(Math.abs);
+  // What the total adds to the items, such as tax and shipping together.
+  const total = cents(cart.total);
+  const items = cart.items.reduce((sum, item) => sum + (cents(item.line_total) ?? (cents(item.price) ?? 0) * item.qty), 0);
+  if (total !== null && total > items && items > 0) amounts.push(total - items);
+  return amounts;
+}
+
+/**
+ * Each amount a reply quotes while it shows a cart that is none of the amounts the chat's carts carried so far, one line
+ * each. An amount is also fair when it is the price of the card the shopper picked, an amount the shopper typed, or one
+ * share of a cart's amount, such as one night of a two-night room or one of two tickets.
+ */
+export function amountsNotTheCarts(purchase: Pick<Purchase, "steps" | "picked" | "switchedFrom">): string[] {
+  const known = new Set<number>();
+  for (const card of [purchase.picked, ...purchase.switchedFrom]) {
+    const price = cents(card?.price ?? null);
+    if (price !== null) known.add(price);
+  }
+  const wrong: string[] = [];
+  for (const step of purchase.steps) {
+    for (const amount of amountsIn(step.said)) known.add(amount);
+    const cart = step.answer?.cart;
+    if (!cart?.items.length) continue;
+    for (const amount of amountsOf(cart)) known.add(amount);
+    const fair = (amount: number) => [...known].some((one) => one === amount || [2, 3, 4, 5, 6, 7, 8, 9, 10].some((share) => Math.abs(one / share - amount) <= 1));
+    const off = [...new Set(amountsIn(step.answer!.reply))].filter((amount) => !fair(amount));
+    if (off.length > 0) wrong.push(`after "${short(step.said, 40)}" the reply quotes ${off.map(money).join(", ")}, which the cart does not carry (its total is ${cart.total})`);
+  }
+  return wrong;
+}
+
 /**
  * The checks every purchase chat gets, whatever it was for, and the record of how it ended (lib/outcome.ts). Call it
  * once, after the last message of the chat.
@@ -946,6 +1103,11 @@ export function checkChat(t: EveEvalContext, row: StoreCase, purchase: Purchase)
   t.check(mismatched, satisfies((list: string[]) => list.length === 0, `when a reply asks for a yes, the answer's next step is the confirm and no detail is still listed as missing (${mismatched.join("; ") || "it always was"})`)).label("fields-agree-with-reply");
   t.check(misquoted, satisfies((list: string[]) => list.length === 0, `when a reply asks for a yes, it quotes the cart's total, and any total it quotes is the cart's (${misquoted.join("; ") || "it always did"})`)).label("reply-total-is-the-carts");
 
+  // Every reply that shows a cart, not only the one that asks for the yes, quotes only amounts the cart carries. On
+  // 2026-11-27 a reply said "about $24.84 before tax and shipping" over a cart of a $47.97 product.
+  const wrongAmounts = amountsNotTheCarts(purchase);
+  t.check(wrongAmounts, satisfies((list: string[]) => list.length === 0, `every amount a reply quotes while it shows a cart is one of the cart's own amounts (${wrongAmounts.join("; ") || "each one was"})`)).label("cart-reply-amounts-are-the-carts");
+
   // A detail asked for again after the shopper gave it was not taken: the reply names it, and says why. A reply that
   // only asks again leaves the shopper guessing what was wrong with the first one.
   t.check(purchase.reasked.length, satisfies((count: number) => count === 0, `a detail the shopper gave and Agentcard asks for again is named in the reply, with the reason it was not taken (${purchase.reasked.join("; ") || "none was asked for again without one"})`)).label("refused-detail-is-named");
@@ -972,14 +1134,26 @@ export function checkChat(t: EveEvalContext, row: StoreCase, purchase: Purchase)
     ).label("cards-can-be-booked");
   }
 
-  // A store that needs the shopper's own account, asked for before any cart: the sign-in comes first, with another store
-  // offered as the alternative. A sign-in asked for after other questions made the shopper answer for nothing.
+  // A store that needs the shopper's own account, asked for before any cart. Agentcard signs in with the shopper's own
+  // account at that store, which the shopper gives once on Agentcard's own page. The sign-in comes first: a sign-in asked
+  // for after other questions made the shopper answer them for nothing.
+  // Where the evals have a test account saved at the store (lib/store-accounts.ts), Agentcard signs in with it by itself
+  // and asks for nothing, so a sign-in asked for is a failure. Where they have none, which is every store until a person
+  // makes one, the sign-in is the store's own answer: "no test account at this store".
   if (purchase.signIn) {
     const signIn = purchase.signIn;
     t.check(signIn.questionsBefore, satisfies((count: number) => count === 0, `a store that needs an account asks for the sign-in first (the shopper had already answered ${signIn.questionsBefore} other question${signIn.questionsBefore === 1 ? "" : "s"} when Agentcard said: ${signIn.said})`)).label("sign-in-offered-first");
-    t.check(signIn.anotherStore, satisfies((offered: boolean) => offered, `a store that needs an account is offered with another store as the alternative (Agentcard said: ${signIn.said})`)).label("another-store-offered");
-    if (signIn.questionsBefore === 0 && signIn.anotherStore) purchase.storeAnswer = { what: "the store needs an account", read_from: signIn.anotherStoreReadFrom === "the reply's words" ? "the reply's words" : "the answer's fields", said: signIn.said };
+    const saved = testAccountAt(row.store);
+    if (saved) t.check(signIn.said, satisfies(() => false, `Agentcard signs in with the shopper's saved account at ${row.store} without asking them to sign in (Agentcard said: ${signIn.said})`)).label("signs-in-with-saved-account");
+    else if (signIn.questionsBefore === 0) purchase.storeAnswer = { what: "no test account at this store", read_from: "the answer's fields", said: signIn.said };
   }
+
+  // A store account's password is typed on Agentcard's own page, never in the chat, where it would be kept as words.
+  const password = steps.find((step) => asksPasswordInChat(step.answer!.reply));
+  t.check(
+    password ? short(password.answer!.reply, 200) : null,
+    satisfies((asked: string | null) => asked === null, `no reply asks the shopper to type a password into the chat${password ? ` (after "${short(password.said, 40)}" Agentcard said: ${short(password.answer!.reply, 200)})` : ""}`),
+  ).label("no-password-in-chat");
 
   // A store whose price is not the card's shows its own price, so the shopper sees it before any yes.
   if (purchase.storeAnswer?.what === "the store's price differs from the card's") {

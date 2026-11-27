@@ -1,7 +1,7 @@
 import type { EveEvalContext, EveEvalTurn } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
-import { RECORD } from "./braintrust-reporter.js";
-import { judge, type Verdict, type Want } from "./judge.js";
+import { RECORD } from "./braintrust-reporter.ts";
+import { judge, type Verdict, type Want } from "./judge.ts";
 
 /** A product card as the shopper sees it in the chat. */
 export interface Card {

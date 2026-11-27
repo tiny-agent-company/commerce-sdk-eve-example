@@ -1,5 +1,7 @@
 import { defineEval } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
+import { chatAgainOnce } from "../lib/connection.ts";
+import { limitFor, oneAfterAnother } from "../lib/one-after-another.ts";
 import { ASKS_PHONE, checkChat, GIVES_A_REASON, sandboxCredentials, shop, SHOPPER } from "../lib/purchase.js";
 import { STORES, SUPPLIERS } from "../lib/stores.js";
 
@@ -22,15 +24,19 @@ import { STORES, SUPPLIERS } from "../lib/stores.js";
 const table = STORES.find((row) => row.supplier === "tables")!;
 const row = { ...table, contact: "refused" as const };
 
+const description = `refused details: ${row.store}, through the ${SUPPLIERS[row.supplier]}, with an email and a phone the supplier refuses`;
+const RUN_LIMIT_MS = 1_200_000;
+
 export default defineEval({
-  description: `refused details: ${row.store}, through the ${SUPPLIERS[row.supplier]}, with an email and a phone the supplier refuses`,
+  description,
   tags: ["refused-details", row.kind],
   metadata: { ask: row.ask, store: row.store, supplier: SUPPLIERS[row.supplier] },
-  timeoutMs: 1_200_000,
+  // Each run of this eval waits for the one before it (lib/one-after-another.ts), so its limit covers theirs too.
+  timeoutMs: limitFor(RUN_LIMIT_MS),
   async test(t) {
     if (!(await sandboxCredentials())) t.skip("This eval runs with sandbox (test mode) credentials only.");
 
-    const purchase = await shop(t, row, "checkout");
+    const purchase = await oneAfterAnother(description, RUN_LIMIT_MS, () => chatAgainOnce(() => shop(t, row, "checkout"), (line) => t.log(line)));
     t.succeeded();
     const gave = purchase.steps.findIndex((step) => step.said.includes(SHOPPER.email) || step.said.includes(SHOPPER.phone));
     const stoppedEarly = purchase.storeAnswer || purchase.appGaveUp || purchase.broke;

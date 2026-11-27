@@ -16,7 +16,7 @@
     "test": "node --test \"real-asks/*.test.ts\" \"agent/lib/*.test.ts\" \"evals/lib/*.test.ts\"",
     "start": "eve start",
     "typecheck": "tsc",
-    "eval:purchases": "eve eval --tag cart --tag checkout --tag asked-once --tag refused-details --repeat 3"
+    "eval:purchases": "eve eval --tag cart --tag checkout --tag asked-once --tag refused-details --tag store-account --repeat 3 --max-concurrency 15"
   },
   "dependencies": {
     "@agent-cards/commerce-sdk": "^0.33.1",

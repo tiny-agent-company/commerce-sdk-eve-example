@@ -1,5 +1,7 @@
 import { defineEval } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
+import { chatAgainOnce } from "../lib/connection.ts";
+import { limitFor, oneAfterAnother } from "../lib/one-after-another.ts";
 import { cartStep, checkChat, checkReached, endedElsewhere, logPath, sandboxCredentials, shop, SHOPPER, type Purchase } from "../lib/purchase.js";
 import { asksWhetherToAdd, type Group } from "../lib/questions.ts";
 import { SUPPLIERS, type StoreCase } from "../lib/stores.js";
@@ -85,7 +87,9 @@ const cases: AskedOnceCase[] = [
   },
   {
     name: "a card whose page address is longer than its title is the same product",
-    row: { store: "Best Buy", supplier: "catalog", kind: "goods", ask: "a StarTech 6 ft flat high speed HDMI cable from Best Buy", at: /best ?buy/i, product: /hdmi/i, cards: "catalog", maxPrice: 60 },
+    // The card may come from either supplier: on 2026-11-27 the only card shown opened Best Buy's own page, and the case
+    // is about the card's link and its title, whoever lists it.
+    row: { store: "Best Buy", supplier: "catalog", kind: "goods", ask: "a StarTech 6 ft flat high speed HDMI cable from Best Buy", at: /best ?buy/i, product: /hdmi/i, maxPrice: 60 },
     never: /another product|a different product/i,
     neverMeans: "the card's link opens that product, so no reply says it opened another product",
   },
@@ -114,19 +118,27 @@ function repliesRead(purchase: Purchase, read: AskedOnceCase["read"]): { said: s
   return steps.flatMap((step) => [step.answer?.reply ?? "", step.turn.reply ?? ""].filter(Boolean).map((reply) => ({ said: step.said, reply, groups: step.answer?.choice?.groups ?? [] })));
 }
 
-export default cases.map((one) =>
-  defineEval({
-    description: `asked once: ${one.name}`,
+/** How long one run of these evals may take: a store's own checkout can take a few minutes to price a cart, and a late result a few more to arrive. */
+const RUN_LIMIT_MS = 1_200_000;
+
+export default cases.map((one) => {
+  const description = `asked once: ${one.name}`;
+  return defineEval({
+    description,
     tags: ["asked-once", one.row.kind],
     metadata: { ask: one.row.ask, store: one.row.store, supplier: SUPPLIERS[one.row.supplier], ...(one.messages ? { messages: [...one.messages, one.row.ask] } : {}) },
-    // A store's own checkout can take a few minutes to price a cart, and a late result a few more to arrive.
-    timeoutMs: 1_200_000,
+    // Each run of this eval waits for the one before it (lib/one-after-another.ts), so its limit covers theirs too.
+    timeoutMs: limitFor(RUN_LIMIT_MS),
     async test(t) {
       if (!(await sandboxCredentials())) t.skip("These evals run with sandbox (test mode) credentials only.");
 
-      let session: Parameters<typeof shop>[4];
-      for (const message of one.messages ?? []) session = (session ? await session.send(message) : await t.send(message)).session;
-      const purchase = await shop(t, one.row, "cart", 480_000, session);
+      // The whole chat, earlier messages included, runs once more when its connection breaks.
+      const chat = async () => {
+        let session: Parameters<typeof shop>[4];
+        for (const message of one.messages ?? []) session = (session ? await session.send(message) : await t.send(message)).session;
+        return shop(t, one.row, "cart", 480_000, session);
+      };
+      const purchase = await oneAfterAnother(description, RUN_LIMIT_MS, () => chatAgainOnce(chat, (line) => t.log(line)));
       t.succeeded();
       checkChat(t, one.row, purchase);
 
@@ -168,5 +180,5 @@ export default cases.map((one) =>
       const same = Boolean(line) && ((picked?.id != null && (line!.product_id === picked.id || (line!.other_product_ids ?? []).includes(picked.id))) || one.row.product.test(line!.name));
       t.check(same, satisfies((is: boolean) => is, `the cart's line is the product the shopper asked for (in the cart: ${lines})`)).label("cart-holds-the-pick");
     },
-  }),
-);
+  });
+});

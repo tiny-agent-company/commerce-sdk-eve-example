@@ -1,5 +1,6 @@
 import type { EveEvalResult } from "eve/evals";
 import type { EvalReporter, EveEvalCompleteContext } from "eve/evals/reporters";
+import { linesOfLastChat } from "./connection.ts";
 import { failedChecks, kindOf, outcomeOf } from "./outcome.ts";
 
 /** The line checkAnswer logs for each graded turn (lib/buy.ts), which this reporter turns into a row's output. */
@@ -41,7 +42,8 @@ export function braintrustReporter(config: { projectName: string }): EvalReporte
     onEvalComplete(result: EveEvalResult, context?: EveEvalCompleteContext) {
       if (!experiment) return;
       const about = context?.evaluation;
-      const turns = (result.result.logs ?? []).filter((line) => line.startsWith(RECORD)).map((line) => JSON.parse(line.slice(RECORD.length)) as { wants?: unknown; context?: unknown; [key: string]: unknown });
+      // A chat run again because its connection broke is read from its last run, the one the eval was graded on.
+      const turns = linesOfLastChat(result.result.logs ?? []).filter((line) => line.startsWith(RECORD)).map((line) => JSON.parse(line.slice(RECORD.length)) as { wants?: unknown; context?: unknown; [key: string]: unknown });
       const scores: Record<string, number> = {};
       for (const assertion of result.assertions) {
         if (assertion.score === undefined) continue;

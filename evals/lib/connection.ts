@@ -6,8 +6,11 @@
  *
  * - The first message of a chat is sent again in a fresh chat. Nothing was under way, so nothing can happen twice.
  * - A later message is never sent again. A "yes" sent twice could be read as two orders. The eval connects to the same
- *   chat again and reads on from where it was: when the message did arrive, its answer is there to read, and when it
- *   never arrived the chat is given up as broken, which is reported as the run's own failure, not Agentcard's.
+ *   chat again and reads on from where it was: when the message did arrive, its answer is there to read.
+ * - When it never arrived, that chat is given up, and the whole chat runs once more from its first message in a fresh
+ *   chat (`chatAgainOnce`). This is safe because no eval ever places an order: they run with sandbox credentials, where
+ *   every yes stops at the payment. Only a second chat that also drops is reported as broken, which is the run's own
+ *   result ("run broke"), not Agentcard's failure. On 2026-11-27 one rental car run of 381 lost its connection this way.
  */
 
 /** The chat as this file needs it, so the rule can be tested without a chat app. */
@@ -59,4 +62,27 @@ export async function deliver<Turn>(chat: Chat<Turn>, message: string, first: bo
     if (turn === null) throw new ChatBroke("the connection dropped before the message arrived in the chat. It is not sent a second time, so a yes can never be sent twice");
     return turn;
   }
+}
+
+/** The log line that says the chat runs again from its first message. What was recorded before it belongs to the chat given up. */
+export const CHAT_AGAIN = "CHAT AGAIN ";
+
+/**
+ * Runs a whole chat, and runs it once more from its first message when its connection broke (`broke` set). Returns the
+ * second chat when there was one. `note` hears a line for the eval's log, which starts with CHAT_AGAIN.
+ */
+export async function chatAgainOnce<T extends { broke: string | null }>(chat: () => Promise<T>, note: (line: string) => void = () => {}): Promise<T> {
+  const first = await chat();
+  if (first.broke === null) return first;
+  note(`${CHAT_AGAIN}the connection broke (${first.broke}), so the whole chat runs once more from its first message, in a fresh chat`);
+  return chat();
+}
+
+/** The lines logged by the last chat a run had: everything after the last CHAT_AGAIN line, or every line when there is none. */
+export function linesOfLastChat(lines: readonly string[]): readonly string[] {
+  let at = -1;
+  lines.forEach((line, index) => {
+    if (line.startsWith(CHAT_AGAIN)) at = index;
+  });
+  return at < 0 ? lines : lines.slice(at + 1);
 }
