@@ -47,6 +47,8 @@ The shopper approves each purchase on an Agentcard approval page, and a new shop
 
 The evals send real shopper messages to the agent, which calls the live buy tool, and grade the answer. Nothing is ever ordered. No eval says yes to a cart, and each one fails if a call tries to confirm an order, with one exception: the checkout evals say yes with sandbox credentials only, where Agentcard stops every purchase at the payment, and they fail if anything is placed. See [Cart and checkout, store by store](#cart-and-checkout-store-by-store).
 
+A run of an eval ends as one of a few kinds, so a failure of Agentcard's is never mixed with something else: it passed, it failed, the store gave its own answer (out of stock, for one), the example chat app in this repository made the mistake, or the run's own connection broke. See [How a run ends](#how-a-run-ends).
+
 ```bash
 npm run eval                 # every eval
 npm run eval -- buy/search   # only the one-message searches
@@ -56,6 +58,7 @@ npm run eval -- --exclude-tag real     # leave out the real asks that failed
 npm run eval -- --tag cart             # can each store put a product in the cart
 npm run eval -- --tag checkout         # does each store get as far as the checkout step
 npm run eval -- --tag asked-once       # is a shopper who said what they want asked again
+npm run eval:purchases       # every cart and checkout eval three times, as the daily run sends them
 npm run eval -- --verbose    # also print the products and Agentcard's reply for each eval
 ```
 
@@ -69,11 +72,13 @@ npm run eval -- --verbose    # also print the products and Agentcard's reply for
 | [`evals/buy/asked-once.eval.ts`](evals/buy/asked-once.eval.ts) | Eight ways a shopper who had said what they want was asked again, or shown a product that could not go in a cart: a product named in full, an answer to the store's own question, an answer sent with the price, a colour the store lists, a store listed without `www`, a card with a longer page address, a store in Canada, and a store named after another one. Each must reach a cart and never say what it used to say. |
 | [`evals/lib/stores.ts`](evals/lib/stores.ts) | The list of stores and suppliers both files run. To add a store, add a row. |
 | [`evals/lib/purchase.ts`](evals/lib/purchase.ts) | The shopper those evals play, with its placeholder address and details, and the fixed rules that check a cart. |
+| [`evals/lib/store-answer.ts`](evals/lib/store-answer.ts) | The store's own answers (out of stock, another price, no seats, its own account needed), read from the answer's fields first. |
+| [`evals/lib/outcome.ts`](evals/lib/outcome.ts) | The kinds a run ends as, and how the runs of one eval are counted together. |
 | [`evals/buy/real.eval.ts`](evals/buy/real.eval.ts) | Real asks that did not get a good answer, loaded from a private Braintrust dataset when the evals run. See [Real asks that failed](#real-asks-that-failed). |
 | [`evals/judge/calibration.eval.ts`](evals/judge/calibration.eval.ts) | Checks the judge itself with made-up answers whose faults are known. |
 | [`evals/lib/buy.ts`](evals/lib/buy.ts) | Reads the cards the shopper saw and runs the checks. |
 | [`evals/lib/judge.ts`](evals/lib/judge.ts) | The judge: a model that reads every card against every requirement of the ask. |
-| [`evals/lib/slack-reporter.ts`](evals/lib/slack-reporter.ts) | Posts the evals that did not pass to Slack. |
+| [`evals/lib/slack-reporter.ts`](evals/lib/slack-reporter.ts) | Posts the evals that did not pass to Slack, one post per eval however many times it ran. |
 
 ### How an answer is graded
 
@@ -119,15 +124,38 @@ Some purchases stop earlier. A booking (a flight, a room, a car, a table, a clas
 
 Every rule is fixed; no judge model reads a cart. A store that is down, a supplier that shows no card for the store, or a checkout that asks for something the shopper cannot give fails that one eval with the reason in plain words, and the run goes on.
 
+### How a run ends
+
+Every run of an eval ends as one kind ([`evals/lib/outcome.ts`](evals/lib/outcome.ts)). Only `failed` is counted against Agentcard, and nothing else is hidden: each kind is shown in Slack, in Braintrust and in the console.
+
+| Kind | What it means |
+|---|---|
+| `passed` | Every check held. |
+| `failed` | A check about Agentcard did not hold. |
+| `store's own answer` | The purchase stopped on something only the store decides, and Agentcard said so: the product is out of stock, the store's price is not the card's, a booking has no seats or no availability, or the store needs the shopper's own account. Neither a pass nor a failure. |
+| `example app's mistake` | The example chat app in this repository got it wrong and nothing of Agentcard's did: its model answered the shopper itself instead of calling the buy tool, wrote a link, or changed the shopper's words. The shopper then says the message again, so the rest of the chat is still checked. |
+| `run broke` | The eval's own connection to the chat dropped twice. |
+| `skipped` | The eval did not run, with its reason. |
+
+A store's own answer is read from the answer's fields where it has one: the code a purchase stopped with, the cart's `price_change`, a card's `availability`, the sign-in step. Where an answer carries no field for it, the reply's words are read, and the result says which it was ([`evals/lib/store-answer.ts`](evals/lib/store-answer.ts)).
+
+A store that needs the shopper's own account is that store's own answer only when Agentcard offers the sign-in first, before any other question, with another store as the alternative (`sign-in-offered-first`, `another-store-offered`). A sign-in asked for after the shopper answered other questions is a failure: they answered them for nothing. Food delivery is different, because its cart is built before the sign-in.
+
+**Three runs.** A store's own checkout does not behave the same way twice, so the daily run sends each cart and checkout eval three times (`--repeat 3`) and reports how many of the three passed: "Passed 2 of 3 runs. 1 failed." `npm run eval:purchases` does the same by hand.
+
 ### Failed evals in Slack
 
-Set `SLACK_BOT_TOKEN` (a bot that can post to the channel) and `SLACK_EVALS_CHANNEL` (the channel's id). Each eval that did not pass is posted as its conversation, word for word:
+Set `SLACK_BOT_TOKEN` (a bot that can post to the channel) and `SLACK_EVALS_CHANNEL` (the channel's id). Each eval that did not pass is posted once, however many times it ran, as the conversation of one run that did not pass, word for word:
 
 - the post is the first message sent to the agent, under "Message sent to the agent:";
 - its thread holds the agent's reply, under "Agent's reply:", then each next message and reply;
-- the last reply in the thread is "Why the eval failed:", one line per failed check.
+- the last reply in the thread is "Why the eval failed:", with how many of the eval's runs passed ("Passed 1 of 3 runs. 2 failed. This thread shows run 2."), then one line per failed check. A run that failed for another reason is told under its own line, and runs that failed the same way are named together.
 
-A run where everything passes posts nothing. A run posts at most 25 evals; Braintrust holds every one.
+An eval whose only trouble was the example chat app's mistake, or a broken connection, is posted the same way under a headline that says so.
+
+A run of the evals that sent each eval more than once, or saw a store's own answer or a mistake of the example chat app, ends with one closing message: how many runs ended as each kind, then each store's own answer with what Agentcard said, each mistake of the example chat app, the evals that passed only some of the time, and the evals that failed every time. A store's own answer gets no post of its own.
+
+A run where everything passes posts nothing. A run posts at most 25 evals, failures of Agentcard's first; Braintrust holds every one. The counts by kind are printed to the console at the end of every run, with or without Slack.
 
 ### Results in Braintrust
 
@@ -139,9 +167,12 @@ Set `BRAINTRUST_API_KEY` and each run is saved as an experiment in the Braintrus
 | Output | For each graded turn: the product cards the shopper saw, Agentcard's reply and the chat agent's reply. |
 | Expected | What the shopper asked for, as the requirements each card was checked against. |
 | Scores | Every check by name, 1 for passed and 0 for failed; `accurate-cards` is the share of cards that are what was asked for. |
-| Metadata | The eval's name and verdict, and under `did_not_pass` each failed check with the judge's reason. |
+| Metadata | The eval's name and verdict, under `did_not_pass` each failed check with the judge's reason, and under `result` how the run ended ([How a run ends](#how-a-run-ends)): `passed`, `failed`, `store's own answer`, `example app's mistake`, `run broke` or `skipped`. A store's own answer is under `store_answer`, with whether it was read from a field or from the reply's words, and each message the example chat app answered itself is under `app_mistakes`. |
+| Tags | The eval's tags, and the kind again as `result: failed`, to filter a run by. |
 
 To see what went wrong in a run, sort by `accurate-cards` or filter on a score below 1, open a row, and read `did_not_pass` beside the cards in Output. To compare two runs, open one experiment and pick the other under Compare.
+
+When a run sends each eval three times, every run of an eval is a row of its own, named `buy/cart/0007#2`, with its number under `attempt`. Group the rows by `eval` to read how many of an eval's runs passed.
 
 ### Real asks that failed
 
@@ -262,13 +293,13 @@ Run it once a day after 12:00 UTC, so that a follow-up sent in the twelve hours 
 
 ### Scheduled runs on Modal
 
-[`modal_app.py`](modal_app.py) runs the evals on [Modal](https://modal.com): the core set every six hours, the coverage matrix and the reviewed real asks once a day, and the cart and checkout evals once a day in a run of their own, because each is a chat of several messages with a live store and the run takes up to an hour. The job that picks the real asks does not run on Modal. Each run checks out the current `main` first, so a merged change is picked up by the next run with no new deploy.
+[`modal_app.py`](modal_app.py) runs the evals on [Modal](https://modal.com): the core set every six hours, the coverage matrix and the reviewed real asks once a day, and the cart and checkout evals once a day in a run of their own, each sent three times, because each is a chat of several messages with a live store. That run takes about an hour and a half and has six hours before Modal stops it. The job that picks the real asks does not run on Modal. Each run checks out the current `main` first, so a merged change is picked up by the next run with no new deploy.
 
 ```bash
 modal deploy modal_app.py            # once, and again only when modal_app.py changes
 modal run modal_app.py::core         # run the core set now
 modal run modal_app.py::everything   # run the daily set now
-modal run modal_app.py::purchases    # run the cart and checkout evals now
+modal run modal_app.py::purchases    # run the cart and checkout evals now, three times each
 ```
 
 The keys live in the Modal secret `buy-evals`: `ANTHROPIC_API_KEY`, `AGENTCARD_CLIENT_ID`, `AGENTCARD_CLIENT_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_EVALS_CHANNEL`, `BRAINTRUST_API_KEY` and, to track conversations, `AGNOST_ORG_ID`.
