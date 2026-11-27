@@ -3,7 +3,7 @@ import { satisfies } from "eve/evals/expect";
 import { chatAgainOnce } from "../lib/connection.ts";
 import { limitFor, oneAfterAnother } from "../lib/one-after-another.ts";
 import { cartStep, checkCart, checkChat, checkReached, endedElsewhere, logPath, sandboxCredentials, shop } from "../lib/purchase.js";
-import { testAccountAt } from "../lib/store-accounts.ts";
+import { ACCOUNT_SHOPPER, savedAccountAt, testAccountAt } from "../lib/store-accounts.ts";
 import { STORES, SUPPLIERS } from "../lib/stores.js";
 
 /**
@@ -15,8 +15,9 @@ import { STORES, SUPPLIERS } from "../lib/stores.js";
  *
  * One eval per row of lib/stores.ts the evals have seen need an account (`needsAccount`). The shopper asks for the
  * product and picks a card, as in the cart evals, and the eval passes when, by fixed rules and no judge model:
- * - with a test account saved for the evals' shopper at the store (lib/store-accounts.ts), the product gets into a cart
- *   at that store with no sign-in asked for, and the cart is right (the cart evals' checks);
+ * - with a test account saved at the store for the account shopper, and the run started as that shopper
+ *   (`EVAL_SHOPPER_ID=evals-store-accounts`, which the daily run on Modal does for these evals; lib/store-accounts.ts),
+ *   the product gets into a cart at that store with no sign-in asked for, and the cart is right (the cart evals' checks);
  * - with none, which is every store until a person makes one, Agentcard asks for the shopper's own account at the store
  *   they named, before any other question, and the answer's next step is that sign-in. That is reported as the store's
  *   own answer, "no test account at this store", never as a failure;
@@ -44,7 +45,13 @@ export default STORES.filter((row) => row.needsAccount).map((row) => {
 
       const purchase = await oneAfterAnother(description, RUN_LIMIT_MS, () => chatAgainOnce(() => shop(t, row, "cart"), (line) => t.log(line)));
       t.succeeded();
-      t.log(testAccountAt(row.store) ? `the evals' shopper has a test account saved at ${row.store}` : `the evals have no test account at ${row.store} yet (lib/store-accounts.ts)`);
+      t.log(
+        savedAccountAt(row.store)
+          ? `the shopper has a test account saved at ${row.store}: Agentcard signs in with it by itself`
+          : testAccountAt(row.store)
+            ? `the evals have a test account at ${row.store}, saved for the shopper ${ACCOUNT_SHOPPER}, and this run is another shopper (set EVAL_SHOPPER_ID=${ACCOUNT_SHOPPER} to use it)`
+            : `the evals have no test account at ${row.store} yet (lib/store-accounts.ts)`,
+      );
 
       if (purchase.signIn) {
         // The account asked for is the shopper's own at the store they named, never one at another store.

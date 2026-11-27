@@ -136,7 +136,8 @@ const ace = retailer("Ace Hardware", /ace/i, "a Stanley 16 ounce claw hammer fro
 const ebay = retailer("eBay", /ebay/i, "a new stainless steel water bottle on eBay, Buy It Now", /bottle/i);
 // TikTok Shop's "Add to cart" leads to its sign-in (2026-11-27).
 const tiktok: StoreCase = { ...retailer("TikTok Shop", /tiktok/i, "a stainless steel water bottle from TikTok Shop", /bottle|tumbler/i), needsAccount: true };
-const mcmaster = retailer("McMaster-Carr", /mcmaster/i, "a pack of M6 stainless steel socket head screws from McMaster-Carr", /screw/i);
+// McMaster-Carr asks for its sign-in before a cart through its own checkout (2026-11-27).
+const mcmaster: StoreCase = { ...retailer("McMaster-Carr", /mcmaster/i, "a pack of M6 stainless steel socket head screws from McMaster-Carr", /screw/i), needsAccount: true };
 
 const retailers: StoreCase[] = [
   amazon,

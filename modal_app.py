@@ -26,32 +26,41 @@ PURCHASE_TAGS = ["cart", "checkout", "asked-once", "refused-details", "store-acc
 PURCHASES = [flag for tag in PURCHASE_TAGS for flag in ("--tag", tag)]
 WITHOUT_PURCHASES = [flag for tag in PURCHASE_TAGS for flag in ("--exclude-tag", tag)]
 
+# The store-account evals run as the one test shopper the store test accounts are saved for (evals/lib/store-accounts.ts),
+# in a run of their own, so every other purchase chat stays a shopper of its own with no account anywhere.
+ACCOUNT_SHOPPER = "evals-store-accounts"
+
 # How long the daily purchases run may take, in seconds. Modal stops a function at its time limit, lets one be set to
 # 24 hours at most, and a run it stops reports nothing, since the reports go out when the run ends. So the limit is set
 # well above what the run takes: on 2026-11-26 the 127 evals took 31 minutes sent once and 102 minutes sent three times,
-# six at a time. Each run of an eval also has a limit of its own (20 minutes for a cart, 30 for a checkout), so one store
-# that hangs cannot hold the run. Six hours is three and a half times the measured run. Measure again before adding many
-# more stores, or before raising how often each eval is sent.
-PURCHASES_TIME_LIMIT = 6 * 60 * 60
+# six at a time. Since 2026-11-27 no more than two chats run at once (below), which makes the run about three times as
+# long: about five hours. Each run of an eval also has a limit of its own (20 minutes for a cart, 30 for a checkout), so
+# one store that hangs cannot hold the run. Twelve hours leaves room for that. Measure again before adding many more
+# stores, or before raising how often each eval is sent.
+PURCHASES_TIME_LIMIT = 12 * 60 * 60
 
 # How many runs of the purchase evals eve holds at once. The three runs of one eval go one after another, never side by
-# side (evals/lib/one-after-another.ts): a supplier that prices one order at a time at a store made the second and third
-# runs wait behind the first on 2026-11-27, and run out of time. A run waiting its turn uses nothing, so eve holds three
-# for each chat it lets run: 15 held is about five to seven chats at a time, close to the six the run had before.
-PURCHASES_HELD_AT_ONCE = 15
+# side, and no more than two purchase chats run at once in all (evals/lib/one-after-another.ts): a supplier that prices
+# one order at a time made later runs of an eval wait behind the first, and store sign-ins in hosted browsers failed when
+# several ran together (2026-11-27). A run waiting its turn uses nothing, so eve holds a few more than the two that chat.
+PURCHASES_HELD_AT_ONCE = 6
 
 app = modal.App("buy-evals")
 image = modal.Image.from_registry("node:24-slim", add_python="3.12").apt_install("git", "ca-certificates")
 keys = [modal.Secret.from_name("buy-evals")]
 
 
-def run_evals(*flags: str) -> None:
+def run_evals(*flags: str, shopper: str | None = None) -> None:
     """Checks out main, installs it and runs `eve eval`. An eval that does not pass is reported to Slack and Braintrust by
-    the evals themselves (exit code 1), so only a run that breaks fails the function."""
-    subprocess.run(["git", "clone", "--depth", "1", REPO, "/evals"], check=True)
-    subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], cwd="/evals", check=True)
+    the evals themselves (exit code 1), so only a run that breaks fails the function. With `shopper`, every chat of the run
+    is that one test shopper (EVAL_SHOPPER_ID, agent/tools/buy.ts)."""
+    if not os.path.isdir("/evals"):
+        subprocess.run(["git", "clone", "--depth", "1", REPO, "/evals"], check=True)
+        subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], cwd="/evals", check=True)
     # The example app records conversations in Agnost when AGNOST_ORG_ID is set. Eval chats are not shoppers, so they never go there.
-    env = {key: value for key, value in os.environ.items() if not key.startswith("AGNOST_")}
+    env = {key: value for key, value in os.environ.items() if not key.startswith("AGNOST_") and key != "EVAL_SHOPPER_ID"}
+    if shopper:
+        env["EVAL_SHOPPER_ID"] = shopper
     result = subprocess.run(["npx", "eve", "eval", "--strict", *flags], cwd="/evals", env=env)
     if result.returncode not in (0, 1):
         raise RuntimeError(f"eve eval broke with exit code {result.returncode}")
@@ -77,6 +86,9 @@ def purchases() -> None:
     messages with a live store, and a store's own checkout can take minutes to price a cart, so they run apart from the
     other evals.
 
-    About six chats run at a time. More at once makes the stores' own checkouts slower and the connection to the chat drop,
-    which then reads as flakiness. See PURCHASES_HELD_AT_ONCE and PURCHASES_TIME_LIMIT above."""
-    run_evals(*PURCHASES, "--repeat", "3", "--max-concurrency", str(PURCHASES_HELD_AT_ONCE))
+    No more than two chats run at a time. More at once makes the stores' own checkouts slower, the connection to the chat
+    drop and store sign-ins fail, which then reads as flakiness. See PURCHASES_HELD_AT_ONCE and PURCHASES_TIME_LIMIT
+    above. The store-account evals run last, in a run of their own, as the test shopper the store accounts are saved for."""
+    held = ["--repeat", "3", "--max-concurrency", str(PURCHASES_HELD_AT_ONCE)]
+    run_evals(*PURCHASES, "--exclude-tag", "store-account", *held)
+    run_evals("--tag", "store-account", *held, shopper=ACCOUNT_SHOPPER)
