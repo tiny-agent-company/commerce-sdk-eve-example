@@ -1,6 +1,7 @@
 import { defineEval } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
-import { cartStep, checkNothingOrdered, checkReached, logPath, sandboxCredentials, shop, SHOPPER, type Purchase } from "../lib/purchase.js";
+import { cartStep, checkChat, checkReached, endedElsewhere, logPath, sandboxCredentials, shop, SHOPPER, type Purchase } from "../lib/purchase.js";
+import { asksWhetherToAdd, type Group } from "../lib/questions.ts";
 import { SUPPLIERS, type StoreCase } from "../lib/stores.js";
 
 /**
@@ -14,14 +15,18 @@ import { SUPPLIERS, type StoreCase } from "../lib/stores.js";
  * - no reply says the thing that case used to say, such as "Want me to add that one?" to a shopper who had named the
  *   product, or "I couldn't add it in White" for a colour the store lists.
  *
+ * A question about a choice the product has is never "asking again": "Which size should I add?" asks for a size the
+ * shopper has not given, and is fair (lib/questions.ts). What is not fair, here and in every cart and checkout eval, is a
+ * question about something the shopper already said.
+ *
  * The evals run with sandbox (test mode) credentials only, and skip themselves otherwise.
  */
 interface AskedOnceCase {
   /** What used to happen, in the eval's name. */
   name: string;
   row: StoreCase;
-  /** What no reply may say, and the check's message when one does. */
-  never: RegExp;
+  /** What no reply may say, and the check's message when one does: words, or a rule that also reads the choice the answer asks for. */
+  never: RegExp | ((reply: string, groups: readonly Group[]) => boolean);
   neverMeans: string;
   /** Which replies are read: all of them, or only those after the shopper picked a card. Before a pick, "Want me to add it?" can be a fair question. */
   read?: "after the pick";
@@ -36,7 +41,8 @@ interface AskedOnceCase {
   optionsBeforeAddress?: true;
 }
 
-const ASKS_AGAIN = /(want|would you like) me to (add|put)|(should|shall) i add|do you want (me to add|it from)|reply (with a )?yes|say yes and i'll (add|try)/i;
+/** "Want me to add it?" to a shopper who already said what they want. Never a question about a size or a colour the product has. */
+const ASKS_AGAIN = asksWhetherToAdd;
 const COULD_NOT_ADD = /couldn't add|could not add|can't add|cannot add|haven't added/i;
 
 const jadeYoga: StoreCase = { store: "jadeyoga.com", supplier: "shopify", kind: "goods", ask: "a Jade Harmony yoga mat from jadeyoga.com", at: /jade/i, product: /harmony/i, maxPrice: 130 };
@@ -101,11 +107,11 @@ const cases: AskedOnceCase[] = [
   },
 ];
 
-/** Every reply of the chat the case reads, Agentcard's and the agent's own, each with the message it answered. */
-function repliesRead(purchase: Purchase, read: AskedOnceCase["read"]): { said: string; reply: string }[] {
+/** Every reply of the chat the case reads, Agentcard's and the agent's own, each with the message it answered and the choice the answer asked for. */
+function repliesRead(purchase: Purchase, read: AskedOnceCase["read"]): { said: string; reply: string; groups: readonly Group[] }[] {
   const picked = purchase.picked ? purchase.steps.findIndex((step) => step.said.includes(purchase.picked!.name)) : -1;
   const steps = read === "after the pick" ? purchase.steps.slice(Math.max(picked, 0)) : purchase.steps;
-  return steps.flatMap((step) => [step.answer?.reply ?? "", step.turn.reply ?? ""].filter(Boolean).map((reply) => ({ said: step.said, reply })));
+  return steps.flatMap((step) => [step.answer?.reply ?? "", step.turn.reply ?? ""].filter(Boolean).map((reply) => ({ said: step.said, reply, groups: step.answer?.choice?.groups ?? [] })));
 }
 
 export default cases.map((one) =>
@@ -113,8 +119,8 @@ export default cases.map((one) =>
     description: `asked once: ${one.name}`,
     tags: ["asked-once", one.row.kind],
     metadata: { ask: one.row.ask, store: one.row.store, supplier: SUPPLIERS[one.row.supplier], ...(one.messages ? { messages: [...one.messages, one.row.ask] } : {}) },
-    // A store's own checkout can take a few minutes to price a cart.
-    timeoutMs: 720_000,
+    // A store's own checkout can take a few minutes to price a cart, and a late result a few more to arrive.
+    timeoutMs: 1_200_000,
     async test(t) {
       if (!(await sandboxCredentials())) t.skip("These evals run with sandbox (test mode) credentials only.");
 
@@ -122,9 +128,10 @@ export default cases.map((one) =>
       for (const message of one.messages ?? []) session = (session ? await session.send(message) : await t.send(message)).session;
       const purchase = await shop(t, one.row, "cart", 480_000, session);
       t.succeeded();
-      checkNothingOrdered(t, purchase);
+      checkChat(t, one.row, purchase);
 
-      const broke = repliesRead(purchase, one.read).find(({ reply }) => one.never.test(reply));
+      const says = (reply: string, groups: readonly Group[]) => (one.never instanceof RegExp ? one.never.test(reply) : one.never(reply, groups));
+      const broke = repliesRead(purchase, one.read).find(({ reply, groups }) => says(reply, groups));
       t.check(
         broke ?? null,
         satisfies((found: typeof broke | null) => found === null, `${one.neverMeans}${broke ? ` (after "${broke.said.slice(0, 80)}" it said: ${broke.reply.replace(/https?:\/\/\S+/g, "(a link)").replace(/\s+/g, " ").slice(0, 240)})` : ""}`),
@@ -141,6 +148,8 @@ export default cases.map((one) =>
         ).label("options-before-address");
       }
 
+      // The store's own answer, a mistake of the example chat app or a dropped connection is its own kind of result.
+      if (endedElsewhere(purchase)) return;
       const step = cartStep(purchase);
       if (one.until === "the checkout starts") {
         const started = purchase.steps.some((each) => Boolean(each.answer?.cart) || each.answer?.next_action === "shipping_details");

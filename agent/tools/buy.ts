@@ -2,6 +2,7 @@ import { AgentcardClient, BUY_TOOL_DESCRIPTION, buyTool, buyToolDefinition } fro
 import type { BuyToolLink, BuyToolResult } from "@agent-cards/commerce-sdk";
 import { defineTool } from "eve/tools";
 import { recordBuy, type BuyRecord } from "../lib/agnost.js";
+import { cardDates } from "../lib/card-dates.js";
 import { askToSend } from "../lib/shopper-words.js";
 
 const agentcard = new AgentcardClient({
@@ -81,10 +82,24 @@ export default defineTool({
     });
     // Beside the carts, a snapshot says where the purchase stands, for an app to draw: the step the shopper takes next, why a
     // purchase stopped, and the order's id once there is one. None of them holds a link. `ask` is the words this call sent,
-    // which the evals read to check the shopper's words arrived unchanged.
+    // which the evals read to check the shopper's words arrived unchanged. `card_dates` is when each card's booking starts,
+    // by the card's id, for a flight or a table (lib/card-dates.ts). `turn_continues` is true when the call answered while
+    // Agentcard still worked on the request: the result arrives later, so an app shows that it is still working.
     const snapshot = () => {
       const last = results.at(-1);
-      return { ask, links: [...links], more: [...more], carts: last?.carts ?? [], status: last?.status ?? null, next_action: last?.next_action ?? null, decline_code: last?.decline_code ?? null, error_code: last?.error_code ?? null, order_id: last?.order_id ?? null };
+      return {
+        ask,
+        links: [...links],
+        more: [...more],
+        carts: last?.carts ?? [],
+        status: last?.status ?? null,
+        next_action: last?.next_action ?? null,
+        decline_code: last?.decline_code ?? null,
+        error_code: last?.error_code ?? null,
+        order_id: last?.order_id ?? null,
+        card_dates: cardDates(last?.products, last?.envelope),
+        turn_continues: last?.turn_continues === true,
+      };
     };
 
     let done = false;
