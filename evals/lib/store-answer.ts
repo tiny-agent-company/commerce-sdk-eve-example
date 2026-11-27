@@ -51,7 +51,7 @@ const SOLD_OUT_CODE = /(^|_)(sold_out|out_of_stock)($|_)|^items_unavailable$/;
 const PRICE_CODE = /(^|_)price_(changed|change|mismatch|differs|rose|above_listed)($|_)|^max_price_exceeded$/;
 const NO_ROOM_CODE = /^(no_availability|not_available|no_seats|no_listings|no_rooms|no_tables|fully_booked|sold_out|slot_unavailable|time_unavailable)$/;
 
-const SOLD_OUT_WORDS = /\b(out of stock|out-of-stock|sold out|not in stock|isn't in stock|is not in stock|no longer in stock|none left in stock)\b/i;
+const SOLD_OUT_WORDS = /\b(out of stock|out-of-stock|sold out|not in stock|isn't in stock|is not in stock|no longer in stock|none left in stock)\b|\b(no longer|doesn't|does not|didn't|did not) (has|have|carry|carries|stock|stocks)\b[^.?!]{0,100}\bin stock\b/i;
 const PRICE_WORDS = /\bprice (has |had )?(changed|went up|gone up|rose|risen|increased|dropped|is different|differs)\b|\b(costs?|charges?|priced?( it| the \w+)?|price (is|was|of)|lists? it)\b(?:[^.?!]|\.\d){0,90}\b(more than|higher than|above|instead of|rather than|not the|different from|and not)\b|\b(now|actually) \$\d/i;
 const NO_ROOM_WORDS = /\bno (seats?|tickets?|listings?|tables?|rooms?|availability|flights?|classes|cars?|spots?|openings?|times?|slots?)\b|\bnone (of them )?(has|have|is|are)\b[^.?!]{0,60}\bavailable\b|\b(fully|all) booked\b|\bsold out\b|\bnothing (is )?(available|open|left)\b|\bno \w+( \w+)? (is|are) available\b/i;
 

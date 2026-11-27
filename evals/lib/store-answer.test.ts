@@ -66,3 +66,9 @@ test("another store offered beside the sign-in is read from the answer's stores,
 test("amounts are read in cents, thousands and all", () => {
   assert.deepEqual(amountsIn("It's $1,069.00 with a $5.35 fee, about $226 a night."), [106900, 535, 22600]);
 });
+
+test("a store that no longer has the product in stock, said in other words, is out of stock", () => {
+  const answer = storeAnswerOf({ code: null, reply: "Amazon no longer has the 8-pack batteries in stock, so nothing is in your cart.", booking: false });
+  assert.equal(answer?.what, "out of stock");
+  assert.equal(answer?.read_from, "the reply's words");
+});

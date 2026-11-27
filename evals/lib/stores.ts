@@ -27,6 +27,8 @@
  * There are countless Shopify stores, so one stands for all of them.
  */
 
+import { daysFromNow, monthOf, thisWeekend, type Window } from "./dates.ts";
+
 /** A date a few days out, as a shopper would type it, so no row ever asks for a day in the past. */
 export function dayFromNow(days: number): string {
   return new Date(Date.now() + days * 86_400_000).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
@@ -36,6 +38,9 @@ export function dayFromNow(days: number): string {
 function monthFromNow(days: number): string {
   return new Date(Date.now() + days * 86_400_000).toLocaleDateString("en-US", { month: "long" });
 }
+
+/** The days a booking's ask names, first and last, so every card and the booking itself can be checked against them (lib/dates.ts). */
+const days = (first: number, nights = 0): Window => daysFromNow(first, nights);
 
 /** How the suppliers read in an eval's name and log. */
 export const SUPPLIERS = {
@@ -79,6 +84,20 @@ export interface StoreCase {
   maxPrice?: number;
   /** How many the shopper asks for, when it is not one. */
   quantity?: number;
+  /** The size the ask names, as the shopper words it (`medium`, `10`), for a product that comes in sizes: the cart's line must show it. */
+  size?: string;
+  /** The colour the ask names, for a product that comes in colours: the card picked must not be another colour, and the cart's line must show it. */
+  color?: string;
+  /**
+   * The days the ask names, for a booking that has a date (a flight, a room, a car, a table, a class, a ticket, an event):
+   * every card shown and the booking held must be for those days (lib/dates.ts).
+   */
+  window?: Window;
+  /**
+   * `refused` for the one booking that gives the placeholder email and phone a booking supplier is known to refuse, to
+   * check that the shopper is told which detail was refused and why. Every other booking gives details suppliers accept.
+   */
+  contact?: "refused";
   /** True for a booking that costs nothing, such as a restaurant table: its line shows no price. */
   free?: true;
   /** Where the shopper has it delivered, when the store ships to another country than the placeholder address is in. Never a real person's. */
@@ -105,8 +124,8 @@ const fromCatalog = (row: StoreCase): StoreCase => ({ ...row, supplier: "catalog
 
 const amazon = retailer("Amazon", /amazon/i, "an 8-pack of Amazon Basics AA batteries from Amazon", /\bAA\b/i);
 const target = retailer("Target", /target/i, "a box of Crayola 24 count crayons from Target", /crayon/i);
-const gap = retailer("Gap", /gap/i, "a black cotton crewneck t-shirt for men in size medium from Gap", /t-?shirt|tee/i);
-const uniqlo = retailer("Uniqlo", /uniqlo/i, "a white AIRism cotton crew neck t-shirt for men in size medium from Uniqlo", /airism/i);
+const gap: StoreCase = { ...retailer("Gap", /gap/i, "a black cotton crewneck t-shirt for men in size medium from Gap", /t-?shirt|tee/i), size: "medium", color: "black" };
+const uniqlo: StoreCase = { ...retailer("Uniqlo", /uniqlo/i, "a white AIRism cotton crew neck t-shirt for men in size medium from Uniqlo", /airism/i), size: "medium", color: "white" };
 const ace = retailer("Ace Hardware", /ace/i, "a Stanley 16 ounce claw hammer from Ace Hardware", /hammer/i);
 const ebay = retailer("eBay", /ebay/i, "a new stainless steel water bottle on eBay, Buy It Now", /bottle/i);
 const tiktok = retailer("TikTok Shop", /tiktok/i, "a stainless steel water bottle from TikTok Shop", /bottle|tumbler/i);
@@ -162,17 +181,10 @@ const otherStores: StoreCase[] = [
     maxPrice: 60,
     skip: "AutoZone's checkout refuses the shopper's placeholder phone number, which is from the range reserved for fiction, and an eval must not give a real person's number.",
   },
-  { store: "Allbirds (a brand's own site)", supplier: "own site", kind: "goods", ask: "Allbirds Tree Runners, men's size 10, from allbirds.com", at: /allbirds/i, product: /tree runner/i, maxPrice: 160 },
-  {
-    store: "Costco (a store's own brand)",
-    supplier: "own site",
-    kind: "goods",
-    ask: "Kirkland Signature extra virgin olive oil from Costco",
-    at: /costco/i,
-    product: /olive oil/i,
-    maxPrice: 60,
-    skip: "Costco's checkout needs the shopper's own Costco account before it builds a cart. An eval has no account to sign in to, and must not use a real one.",
-  },
+  { store: "Allbirds (a brand's own site)", supplier: "own site", kind: "goods", ask: "Allbirds Tree Runners, men's size 10, from allbirds.com", at: /allbirds/i, product: /tree runner/i, maxPrice: 160, size: "10" },
+  // Costco checks out only on the shopper's own Costco account. That is the store's own answer, so the eval runs and reports
+  // it as one: the sign-in offered first, with another store as the alternative (lib/store-answer.ts).
+  { store: "Costco (a store's own brand)", supplier: "own site", kind: "goods", ask: "Kirkland Signature extra virgin olive oil from Costco", at: /costco/i, product: /olive oil/i, maxPrice: 60 },
   { store: "eBay, a used listing", supplier: "used listings", kind: "goods", ask: "a used Canon AE-1 film camera on eBay", at: /ebay/i, product: /canon/i, maxPrice: 250 },
   { store: "a specialty coffee roaster", supplier: "coffee", kind: "goods", ask: "a bag of specialty whole bean coffee from Onyx Coffee Lab's own site", product: /coffee|onyx/i, maxPrice: 60 },
   {
@@ -194,13 +206,13 @@ const food: StoreCase[] = [
 
 /** Bookings. The "cart" is the booking held with its price, and no eval ever says yes to one. */
 const bookings: StoreCase[] = [
-  { store: "a flight", supplier: "flights", kind: "booking", ask: `a one-way flight from San Francisco to New York JFK on ${dayFromNow(21)}, economy, one adult`, product: /SFO|San Francisco|JFK/i, maxPrice: 900 },
-  { store: "a hotel room", supplier: "hotels", kind: "booking", ask: `a hotel in downtown Chicago for two nights from ${dayFromNow(28)}, under $250 a night, for one adult`, product: /./, maxPrice: 600 },
-  { store: "a rental car", supplier: "cars", kind: "booking", ask: `a rental car at LAX for three days from ${dayFromNow(21)}`, product: /./, maxPrice: 600 },
-  { store: "a restaurant table", supplier: "tables", kind: "booking", free: true, ask: `a table for two at an Italian restaurant in San Francisco on ${dayFromNow(7)} at 7pm`, product: /./ },
-  { store: "a fitness class", supplier: "classes", kind: "booking", ask: `a yoga class in Austin on ${dayFromNow(3)} morning`, product: /./, maxPrice: 60 },
-  { store: "resale game tickets", supplier: "tickets", kind: "booking", ask: `two tickets to a New York Knicks home game in ${monthFromNow(45)}`, product: /knicks/i, quantity: 2, maxPrice: 1200 },
-  { store: "a live event", supplier: "events", kind: "booking", ask: "a ticket to a comedy show in New York City this weekend", product: /./, maxPrice: 150 },
+  { store: "a flight", supplier: "flights", kind: "booking", ask: `a one-way flight from San Francisco to New York JFK on ${dayFromNow(21)}, economy, one adult`, product: /SFO|San Francisco|JFK/i, maxPrice: 900, window: days(21) },
+  { store: "a hotel room", supplier: "hotels", kind: "booking", ask: `a hotel in downtown Chicago for two nights from ${dayFromNow(28)}, under $250 a night, for one adult`, product: /./, maxPrice: 600, window: days(28, 2) },
+  { store: "a rental car", supplier: "cars", kind: "booking", ask: `a rental car at LAX for three days from ${dayFromNow(21)}`, product: /./, maxPrice: 600, window: days(21, 3) },
+  { store: "a restaurant table", supplier: "tables", kind: "booking", free: true, ask: `a table for two at an Italian restaurant in San Francisco on ${dayFromNow(7)} at 7pm`, product: /./, window: days(7) },
+  { store: "a fitness class", supplier: "classes", kind: "booking", ask: `a yoga class in Austin on ${dayFromNow(3)} morning`, product: /./, maxPrice: 60, window: days(3) },
+  { store: "resale game tickets", supplier: "tickets", kind: "booking", ask: `two tickets to a New York Knicks home game in ${monthFromNow(45)}`, product: /knicks/i, quantity: 2, maxPrice: 1200, window: monthOf(45) },
+  { store: "a live event", supplier: "events", kind: "booking", ask: "a ticket to a comedy show in New York City this weekend", product: /./, maxPrice: 150, window: thisWeekend() },
   {
     store: "an Uber ride",
     supplier: "rides",
@@ -211,7 +223,31 @@ const bookings: StoreCase[] = [
   },
 ];
 
-export const STORES: StoreCase[] = [...retailers, ...otherStores, ...food, ...bookings];
+/**
+ * Clothing, asked for with a size and a colour, at every store above that sells it. A t-shirt is the plainest thing a
+ * store sells in sizes and colours, so the same ask goes to each: the card picked must not be another colour, no reply
+ * may ask again for the size or the colour, and the cart's line must show both (lib/purchase.ts). The shopper picks the
+ * first card that is the product, whichever supplier it is from. Gap and Uniqlo already ask for a size and a colour
+ * above, and Allbirds for a size, so each of those rows carries the same checks. Costco sells clothing too, and is
+ * covered once above: its answer is its sign-in, whatever is asked for.
+ *
+ * These rows come after every other row, so the ids of the evals above never change when a store is added here.
+ */
+const tee = (store: string, at: RegExp, color: string, supplier: Supplier = "retail"): Omit<StoreCase, "ask"> => ({ store: `${store}, clothing in a size and a colour`, supplier, kind: "goods", at, product: /t-?shirt|\btee\b/i, maxPrice: 45, size: "medium", color });
+
+const clothing: StoreCase[] = [
+  { ...tee("Amazon", /amazon/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Amazon" },
+  { ...tee("Walmart", /walmart/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Walmart" },
+  { ...tee("Target", /target/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Target" },
+  { ...tee("Macy's", /macy/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Macy's" },
+  { ...tee("Kohl's", /kohl/i, "black", "catalog"), ask: "a black cotton crew neck t-shirt for men in size medium from Kohl's" },
+  { ...tee("eBay", /ebay/i, "black"), ask: "a new black cotton crew neck t-shirt for men in size medium on eBay, Buy It Now" },
+  { ...tee("TikTok Shop", /tiktok/i, "black"), ask: "a black cotton t-shirt for men in size medium from TikTok Shop" },
+  { ...tee("Pokémon Center", /pok[eé]mon/i, "black"), ask: "a black Pikachu t-shirt for adults in size medium from Pokémon Center" },
+  { ...tee("Zazzle", /zazzle/i, "white"), ask: "a white t-shirt for men with a mountain design in size medium from Zazzle" },
+];
+
+export const STORES: StoreCase[] = [...retailers, ...otherStores, ...food, ...bookings, ...clothing];
 
 /**
  * In Agentcard's list of merchants, but not covered, with the reason. Nothing here can be put in a cart, so there is

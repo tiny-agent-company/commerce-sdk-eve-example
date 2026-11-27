@@ -138,8 +138,10 @@ export function checkWordsUnchanged(t: EveEvalContext, turn: EveEvalTurn, messag
  * The checks every turn must pass, whatever the shopper asked: nothing failed, no order was placed or started, and the
  * agent's reply has no link in it. `shopperSaidYes` is for the one kind of turn where the shopper did say yes (the
  * checkout evals): the call may then confirm and Agentcard may stop it at the payment, but still nothing may be ordered.
+ * `refusalIsReported` is for a chat that reports a refusal itself, once, as the reason it stopped or as the store's own
+ * answer (the cart and checkout evals): the refusal is then not counted here as well.
  */
-export function checkTurn(t: EveEvalContext, turn: EveEvalTurn, shopperSaidYes = false): void {
+export function checkTurn(t: EveEvalContext, turn: EveEvalTurn, shopperSaidYes = false, refusalIsReported = shopperSaidYes): void {
   turn.noFailedCalls();
   // A turn where the shopper said yes may confirm, and may be stopped at the payment: the checkout evals grade that stop.
   if (!shopperSaidYes) {
@@ -153,7 +155,7 @@ export function checkTurn(t: EveEvalContext, turn: EveEvalTurn, shopperSaidYes =
   t.check(reply, satisfies((text: string) => !/https?:\/\/|www\./i.test(text), "the agent's reply has no link")).label("no-link-in-reply");
   const answer = lastAnswer(turn);
   if (!answer) return;
-  if (!shopperSaidYes) {
+  if (!refusalIsReported) {
     t.check(
       answer.status,
       satisfies((status: string) => status !== "declined", `Agentcard did not refuse (it said: ${answer.reply.slice(0, 200)})`),

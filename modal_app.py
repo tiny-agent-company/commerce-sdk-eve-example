@@ -26,10 +26,10 @@ WITHOUT_PURCHASES = [flag for tag in PURCHASE_TAGS for flag in ("--exclude-tag",
 
 # How long the daily purchases run may take, in seconds. Modal stops a function at its time limit, lets one be set to
 # 24 hours at most, and a run it stops reports nothing, since the reports go out when the run ends. So the limit is set
-# well above what the run takes: on 2026-11-26 the 127 evals took 29 minutes sent once, six at a time, which is about an
-# hour and a half sent three times. Each eval also has a limit of its own (20 minutes for a cart, 30 for a checkout), so
-# one store that hangs cannot hold the run. Six hours is four times the measured run. Measure again before adding many
-# more stores, or before raising how often each eval is sent.
+# well above what the run takes: on 2026-11-26 the 127 evals took 31 minutes sent once and 102 minutes sent three times,
+# six at a time. Each eval also has a limit of its own (20 minutes for a cart, 30 for a checkout), so one store that
+# hangs cannot hold the run. Six hours is three and a half times the measured run. Measure again before adding many more
+# stores, or before raising how often each eval is sent.
 PURCHASES_TIME_LIMIT = 6 * 60 * 60
 
 app = modal.App("buy-evals")
