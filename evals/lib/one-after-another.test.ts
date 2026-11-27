@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { limitFor, oneAfterAnother, repeats } from "./one-after-another.ts";
+import { chatsAtOnce, limitFor, oneAfterAnother, repeats } from "./one-after-another.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -46,6 +46,24 @@ test("the number of runs is read from the command line, and an eval's limit grow
   assert.equal(repeats(["node", "eve", "eval", "--repeat=2"]), 2);
   assert.equal(repeats(["node", "eve", "eval", "--tag", "cart"]), 1);
   assert.equal(repeats(["node", "eve", "eval", "--repeat", "many"]), 1);
-  assert.equal(limitFor(1_200_000, ["eve", "eval", "--repeat", "3"]), 3_600_000);
-  assert.equal(limitFor(1_200_000, ["eve", "eval"]), 1_200_000);
+  assert.equal(limitFor(1_200_000, ["eve", "eval", "--repeat", "3", "--max-concurrency", "2"]), 3_600_000);
+  assert.equal(limitFor(1_200_000, ["eve", "eval", "--repeat", "3", "--max-concurrency", "6"]), 7_200_000);
+  assert.equal(limitFor(1_200_000, ["eve", "eval"]), 4_800_000, "evals.config.ts holds four at once");
+});
+
+test("no more than two purchase chats run at once, whatever eval they belong to", async () => {
+  assert.equal(chatsAtOnce({}), 2);
+  assert.equal(chatsAtOnce({ PURCHASE_CHATS_AT_ONCE: "1" }), 1);
+  assert.equal(chatsAtOnce({ PURCHASE_CHATS_AT_ONCE: "lots" }), 2);
+  let now = 0;
+  let most = 0;
+  const run = (key: string) =>
+    oneAfterAnother(key, 5_000, async () => {
+      now++;
+      most = Math.max(most, now);
+      await pause(15);
+      now--;
+    });
+  await Promise.all(["a", "b", "c", "d", "e", "a", "b"].map((key) => run(`at once: ${key}`)));
+  assert.equal(most, 2);
 });

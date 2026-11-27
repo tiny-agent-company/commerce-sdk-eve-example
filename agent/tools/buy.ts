@@ -41,9 +41,12 @@ export default defineTool({
   async *execute(input, ctx) {
     // The signed-in user is the shopper. Without auth, each session is its own shopper. Local development and the evals
     // sign every session in as the same stand-in user, who is nobody: there too each session is its own shopper, so two
-    // chats never share a cart.
+    // chats never share a cart. The one exception is an eval run that signs in to a store with a test account: it sets
+    // EVAL_SHOPPER_ID, and every local session is then that one test shopper, who has the account saved with Agentcard
+    // (evals/lib/store-accounts.ts). It is never a real person, and a signed-in user is never replaced by it.
     const user = ctx.session.auth.current;
-    const externalUserId = user && user.principalType !== "local-dev" ? user.principalId : `session:${ctx.session.id}`;
+    const local = process.env.EVAL_SHOPPER_ID || `session:${ctx.session.id}`;
+    const externalUserId = user && user.principalType !== "local-dev" ? user.principalId : local;
     const key = `${externalUserId}:${ctx.session.id}`;
     let buy = shoppers.get(key);
     if (!buy) {

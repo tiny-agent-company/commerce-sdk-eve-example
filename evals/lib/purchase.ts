@@ -8,7 +8,7 @@ import { cardDays, daysIn, inWindow } from "./dates.ts";
 import { OUTCOME, type Outcome } from "./outcome.ts";
 import { askedNotOffered, inlineChoice, namesAnotherColor, namesAnotherSize, offersThePagesOptions, pickValue, saidValue, showsColor, showsSize, unfairQuestions, valueOf, type Group } from "./questions.ts";
 import { amountsIn, asksPasswordInChat, needsAccount, noRoomByCode, storeAnswerOf, type StoreAnswer } from "./store-answer.ts";
-import { testAccountAt } from "./store-accounts.ts";
+import { savedAccountAt } from "./store-accounts.ts";
 import { SUPPLIERS, type StoreCase } from "./stores.ts";
 
 /**
@@ -1137,13 +1137,13 @@ export function checkChat(t: EveEvalContext, row: StoreCase, purchase: Purchase)
   // A store that needs the shopper's own account, asked for before any cart. Agentcard signs in with the shopper's own
   // account at that store, which the shopper gives once on Agentcard's own page. The sign-in comes first: a sign-in asked
   // for after other questions made the shopper answer them for nothing.
-  // Where the evals have a test account saved at the store (lib/store-accounts.ts), Agentcard signs in with it by itself
-  // and asks for nothing, so a sign-in asked for is a failure. Where they have none, which is every store until a person
-  // makes one, the sign-in is the store's own answer: "no test account at this store".
+  // Where this run's shopper has a test account saved at the store (lib/store-accounts.ts), Agentcard signs in with it by
+  // itself and asks for nothing, so a sign-in asked for is a failure. Where it has none, the sign-in is the store's own
+  // answer: "no test account at this store".
   if (purchase.signIn) {
     const signIn = purchase.signIn;
     t.check(signIn.questionsBefore, satisfies((count: number) => count === 0, `a store that needs an account asks for the sign-in first (the shopper had already answered ${signIn.questionsBefore} other question${signIn.questionsBefore === 1 ? "" : "s"} when Agentcard said: ${signIn.said})`)).label("sign-in-offered-first");
-    const saved = testAccountAt(row.store);
+    const saved = savedAccountAt(row.store);
     if (saved) t.check(signIn.said, satisfies(() => false, `Agentcard signs in with the shopper's saved account at ${row.store} without asking them to sign in (Agentcard said: ${signIn.said})`)).label("signs-in-with-saved-account");
     else if (signIn.questionsBefore === 0) purchase.storeAnswer = { what: "no test account at this store", read_from: "the answer's fields", said: signIn.said };
   }

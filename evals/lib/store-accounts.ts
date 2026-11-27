@@ -1,22 +1,37 @@
 /**
- * The stores where the evals' shopper has a test account of their own saved with Agentcard.
+ * The stores where the evals' account shopper has a test account of their own saved with Agentcard.
  *
  * At a store that needs an account, Agentcard signs in with the shopper's own account at that store, which the shopper
- * gave once on Agentcard's own page (never in the chat). An eval must never use a real person's account, and no eval
- * creates an account at a real store. So a store counts here only once a person has made a test account there, for
- * testing only, and saved it with Agentcard for the shopper the evals play. The stores that need one are the ones the
- * evals see ask for a sign-in (buy/store-account.eval.ts and the stores' rows in lib/stores.ts).
+ * gave once on Agentcard's own store sign-in page (never in the chat). An eval must never use a real person's account,
+ * and no eval creates an account. So a store counts here only once a person has made a test account there, for testing
+ * only, and it was saved on that page for one test shopper, `ACCOUNT_SHOPPER`. That shopper is nobody: an id the example
+ * app uses for every chat of a run started with `EVAL_SHOPPER_ID` set to it (agent/tools/buy.ts). Every other eval run
+ * gives each chat a shopper of its own, who has no account anywhere.
  *
- * Until a store is listed here, a sign-in it asks for is reported as that store's own answer, "no test account at this
- * store", and never as a failure. Once it is listed, the purchase must go through without asking the shopper to sign in:
- * Agentcard signs in with the saved account by itself.
+ * So a store's sign-in is graded by who the run's shopper is (`savedAccountAt`):
+ * - the account shopper, at a store listed here: Agentcard signs in with the saved account by itself, and asking the
+ *   shopper to sign in is a failure;
+ * - anyone else, or a store not listed: a sign-in asked for first is that store's own answer, "no test account at this
+ *   store", and never a failure.
  *
  * Only the store's name goes here, matched against the store an eval names. Never an email, a password or a code: this
- * repository is public.
+ * repository is public. The accounts themselves are kept outside it.
  */
+// None yet. A test account exists at McMaster-Carr (2026-11-27), but Agentcard's store sign-in page could not read
+// McMaster-Carr's sign-in form and offered only the live view of the store's page, where nothing typed is kept, so the
+// account could not be saved. Target, Sephora, eBay and TikTok Shop have no test account yet. Add a store here once its
+// account is saved on the page for ACCOUNT_SHOPPER.
 const TEST_ACCOUNTS: RegExp[] = [];
 
-/** True when the evals' shopper has a test account saved at this store. */
+/** The test shopper the store accounts are saved for. A run is this shopper when it starts with EVAL_SHOPPER_ID set to it. */
+export const ACCOUNT_SHOPPER = "evals-store-accounts";
+
+/** True when a person made a test account at this store and saved it for the account shopper. */
 export function testAccountAt(store: string): boolean {
   return TEST_ACCOUNTS.some((at) => at.test(store));
+}
+
+/** True when this run's shopper has a test account saved at this store: the run is the account shopper's, and the store is listed. */
+export function savedAccountAt(store: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.EVAL_SHOPPER_ID === ACCOUNT_SHOPPER && testAccountAt(store);
 }
