@@ -13,9 +13,10 @@
     "eval": "eve eval",
     "real-asks": "node real-asks/pick.ts",
     "real-asks:post": "node real-asks/post.ts",
-    "test": "node --test \"real-asks/*.test.ts\" \"agent/lib/*.test.ts\"",
+    "test": "node --test \"real-asks/*.test.ts\" \"agent/lib/*.test.ts\" \"evals/lib/*.test.ts\"",
     "start": "eve start",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "eval:purchases": "eve eval --tag cart --tag checkout --tag asked-once --tag refused-details --repeat 3"
   },
   "dependencies": {
     "@agent-cards/commerce-sdk": "^0.33.1",
