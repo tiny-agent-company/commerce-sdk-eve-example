@@ -41,13 +41,24 @@ function quoted(label: string, text: string): string {
   return `*${label}*\n${plain(text).slice(0, 3500).split("\n").map((line) => `>${line}`).join("\n")}`;
 }
 
+/** Slack takes about one message a second in a channel and refuses faster posts, so each post waits its turn and retries once when refused. */
 async function post(token: string, body: Record<string, unknown>): Promise<string | null> {
+  await new Promise((done) => setTimeout(done, 1200));
+  const first = await send(token, body);
+  if (first !== "ratelimited") return first;
+  await new Promise((done) => setTimeout(done, 30_000));
+  const again = await send(token, body);
+  return again === "ratelimited" ? null : again;
+}
+
+async function send(token: string, body: Record<string, unknown>): Promise<string | null | "ratelimited"> {
   const response = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" },
     body: JSON.stringify({ unfurl_links: false, unfurl_media: false, ...body }),
   });
   const answer = (await response.json()) as { ok: boolean; ts?: string; error?: string };
+  if (answer.error === "ratelimited") return "ratelimited";
   if (!answer.ok) console.error(`Slack did not take the eval report: ${answer.error}`);
   return answer.ok ? (answer.ts ?? null) : null;
 }
