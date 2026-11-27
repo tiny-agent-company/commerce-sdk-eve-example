@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksWhetherToAdd, inlineChoice, namesAnotherColor, namesAnotherSize, pickValue, saidValue, showsColor, showsSize, unfairQuestions, type Group } from "./questions.ts";
+import { askedNotOffered, asksWhetherToAdd, inlineChoice, offersThePagesOptions, namesAnotherColor, namesAnotherSize, pickValue, saidValue, showsColor, showsSize, unfairQuestions, type Group } from "./questions.ts";
 
 const sizes: Group = { name: "Size", required: true, options: ["XS", "S", "M", "L", "XL"] };
 const colors: Group = { name: "Color", required: true, options: ["Black", "White", "Navy (+$2.00)"] };
@@ -93,4 +93,19 @@ test("a card that names another size is not the size asked for, and one that nam
   assert.ok(!namesAnotherSize("Men's V-Neck T-Shirt 3 Pack", "medium"));
   // A numbered size is never read from a name, where a number can be a pack's count.
   assert.ok(!namesAnotherSize("Tree Runner 12 Pack Laces", "10"));
+});
+
+test("a reply that says the size or the colour asked for is not offered names which one", () => {
+  const reply = "This shirt comes in black in S, L and XL. M is sold out. Which one, or should I look for another shirt?";
+  assert.equal(askedNotOffered(reply, { size: "medium", color: "black" }), "medium");
+  assert.equal(askedNotOffered("It doesn't come in black. It comes in Navy and Heather Grey.", { size: "medium", color: "black" }), "black");
+  assert.equal(askedNotOffered("S is sold out, but M is in stock. Want me to add the M?", { size: "medium" }), null);
+  assert.equal(askedNotOffered("Navy is sold out; black is in stock in M.", { size: "medium", color: "black" }), null);
+  assert.equal(askedNotOffered("Which size do you want? It comes in S, M and L.", { size: "medium" }), null);
+});
+
+test("asking again about a size or a colour is fair when the one asked for is not offered", () => {
+  assert.ok(offersThePagesOptions("This shirt comes in black in S, L and XL. M is sold out. Which one, or should I look for another shirt?"));
+  assert.ok(!offersThePagesOptions("Which size do you want: S, M or L?"));
+  assert.ok(!offersThePagesOptions("M is sold out."));
 });

@@ -5,7 +5,8 @@ starts, so a merged change is picked up by the next run with no new deploy. A ne
 file changes.
 
 The keys come from the Modal secret `buy-evals`: ANTHROPIC_API_KEY, AGENTCARD_CLIENT_ID, AGENTCARD_CLIENT_SECRET,
-SLACK_BOT_TOKEN, SLACK_EVALS_CHANNEL, BRAINTRUST_API_KEY and, once there is one, AGNOST_ORG_ID.
+SLACK_BOT_TOKEN, SLACK_EVALS_CHANNEL and BRAINTRUST_API_KEY. No eval run sends anything to Agnost: the runs below start
+without Agnost's variable, whatever the secret holds.
 
 Run by hand:
     modal run modal_app.py::core         # searches, conversations and the judge's own test
@@ -13,6 +14,7 @@ Run by hand:
     modal run modal_app.py::purchases    # the cart and checkout evals, one pair per store and supplier, three times each
 """
 
+import os
 import subprocess
 
 import modal
@@ -20,17 +22,23 @@ import modal
 REPO = "https://github.com/tiny-agent-company/commerce-sdk-eve-example.git"
 
 # The evals that walk a purchase to its cart or its checkout step. They run once a day, on their own.
-PURCHASE_TAGS = ["cart", "checkout", "asked-once", "refused-details"]
+PURCHASE_TAGS = ["cart", "checkout", "asked-once", "refused-details", "store-account"]
 PURCHASES = [flag for tag in PURCHASE_TAGS for flag in ("--tag", tag)]
 WITHOUT_PURCHASES = [flag for tag in PURCHASE_TAGS for flag in ("--exclude-tag", tag)]
 
 # How long the daily purchases run may take, in seconds. Modal stops a function at its time limit, lets one be set to
 # 24 hours at most, and a run it stops reports nothing, since the reports go out when the run ends. So the limit is set
 # well above what the run takes: on 2026-11-26 the 127 evals took 31 minutes sent once and 102 minutes sent three times,
-# six at a time. Each eval also has a limit of its own (20 minutes for a cart, 30 for a checkout), so one store that
-# hangs cannot hold the run. Six hours is three and a half times the measured run. Measure again before adding many more
-# stores, or before raising how often each eval is sent.
+# six at a time. Each run of an eval also has a limit of its own (20 minutes for a cart, 30 for a checkout), so one store
+# that hangs cannot hold the run. Six hours is three and a half times the measured run. Measure again before adding many
+# more stores, or before raising how often each eval is sent.
 PURCHASES_TIME_LIMIT = 6 * 60 * 60
+
+# How many runs of the purchase evals eve holds at once. The three runs of one eval go one after another, never side by
+# side (evals/lib/one-after-another.ts): a supplier that prices one order at a time at a store made the second and third
+# runs wait behind the first on 2026-11-27, and run out of time. A run waiting its turn uses nothing, so eve holds three
+# for each chat it lets run: 15 held is about five to seven chats at a time, close to the six the run had before.
+PURCHASES_HELD_AT_ONCE = 15
 
 app = modal.App("buy-evals")
 image = modal.Image.from_registry("node:24-slim", add_python="3.12").apt_install("git", "ca-certificates")
@@ -42,7 +50,9 @@ def run_evals(*flags: str) -> None:
     the evals themselves (exit code 1), so only a run that breaks fails the function."""
     subprocess.run(["git", "clone", "--depth", "1", REPO, "/evals"], check=True)
     subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], cwd="/evals", check=True)
-    result = subprocess.run(["npx", "eve", "eval", "--strict", *flags], cwd="/evals")
+    # The example app records conversations in Agnost when AGNOST_ORG_ID is set. Eval chats are not shoppers, so they never go there.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("AGNOST_")}
+    result = subprocess.run(["npx", "eve", "eval", "--strict", *flags], cwd="/evals", env=env)
     if result.returncode not in (0, 1):
         raise RuntimeError(f"eve eval broke with exit code {result.returncode}")
 
@@ -62,10 +72,11 @@ def everything() -> None:
 
 @app.function(image=image, secrets=keys, timeout=PURCHASES_TIME_LIMIT, cpu=2, memory=4096, retries=0, schedule=modal.Cron("17 15 * * *", timezone="UTC"))
 def purchases() -> None:
-    """Once a day: the cart and checkout evals, each sent three times, so a store that gets through only some of the time
-    shows as "passed 2 of 3" and not as a pass or a failure by luck. Each eval is a chat of several messages with a live
-    store, and a store's own checkout can take minutes to price a cart, so they run apart from the other evals.
+    """Once a day: the cart and checkout evals, each sent three times, one run after another, so a store that gets through
+    only some of the time shows as "passed 2 of 3" and not as a pass or a failure by luck. Each eval is a chat of several
+    messages with a live store, and a store's own checkout can take minutes to price a cart, so they run apart from the
+    other evals.
 
-    Six chats run at a time. More at once makes the stores' own checkouts slower and the connection to the chat drop, which
-    then reads as flakiness. See PURCHASES_TIME_LIMIT above for how the run fits its time limit."""
-    run_evals(*PURCHASES, "--repeat", "3", "--max-concurrency", "6")
+    About six chats run at a time. More at once makes the stores' own checkouts slower and the connection to the chat drop,
+    which then reads as flakiness. See PURCHASES_HELD_AT_ONCE and PURCHASES_TIME_LIMIT above."""
+    run_evals(*PURCHASES, "--repeat", "3", "--max-concurrency", str(PURCHASES_HELD_AT_ONCE))

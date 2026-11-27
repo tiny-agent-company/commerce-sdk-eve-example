@@ -1,7 +1,9 @@
 import { defineEval, type EveEvalContext } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
-import { cartStep, checkCart, checkChat, checkReached, checkTotalNeverMovesSilently, endedElsewhere, logPath, readyForTheYes, sandboxCredentials, shop, stillPricing, type Purchase } from "../lib/purchase.js";
-import { storeAnswerOf } from "../lib/store-answer.ts";
+import { chatAgainOnce } from "../lib/connection.ts";
+import { limitFor, oneAfterAnother } from "../lib/one-after-another.ts";
+import { cartStep, checkCart, checkChat, checkReached, checkTotalNeverMovesSilently, endedElsewhere, KEEP_WAITING, logPath, PRICING_WITHIN_MS, readyForTheYes, sandboxCredentials, shop, slowToPrice, stillPricing, type Purchase, type Step } from "../lib/purchase.js";
+import { needsAccount, storeAnswerOf } from "../lib/store-answer.ts";
 import { STORES, SUPPLIERS, type StoreCase } from "../lib/stores.js";
 
 /**
@@ -20,7 +22,9 @@ import { STORES, SUPPLIERS, type StoreCase } from "../lib/stores.js";
  * 2. The yes is stopped at the payment. For goods only, the shopper then says yes, and the answer must be the payment
  *    step and nothing past it. A retailer may first price the order's tax and shipping, which takes a moment: the
  *    shopper waits and asks for an update every half minute, for about ten minutes at most, and says yes again only to
- *    a newly priced total, which the reply must name. In the sandbox that is a refusal that says test mode cannot pay
+ *    a newly priced total, which the reply must name. A store that sends no total in those ten minutes, while Agentcard
+ *    kept the shopper told and offered to keep waiting or to try another store, is the store's own answer: "the store
+ *    was slow to price". In the sandbox that is a refusal that says test mode cannot pay
  *    (`sandbox_mode`), or that the shopper has no test card (`test_card_missing`, with the cart still held at the
  *    store's payment form). With a saved card it would be the approval page (`approval_sent`, an `approval` link), and
  *    for a new live shopper the page to save a card (`needs_card`, a `vault` link); both count. `placing` and
@@ -34,11 +38,13 @@ import { STORES, SUPPLIERS, type StoreCase } from "../lib/stores.js";
  * - Every detail the shopper gives is a placeholder (lib/purchase.ts): a public landmark, a stand-in name, an email on a
  *   domain reserved for examples, a phone number from the range reserved for fiction.
  * - A purchase that needs the shopper's own account stops at the sign-in. Food delivery prices the delivery on the
- *   shopper's own delivery account, and a few stores only check out signed in. An eval has no such account and must not
- *   use a real one, so there "got to the checkout step" means: the cart is right and the shopper is handed that sign-in
- *   page (`next_action: store_login`, a `store_login` link). A store that asks for the sign-in before it builds any
- *   cart is the store's own answer when the sign-in came first, before any other question, with another store offered
- *   as the alternative. A sign-in asked for after other questions is a failure: the shopper answered them for nothing.
+ *   shopper's own delivery account, and a few stores only check out signed in. Agentcard signs in with the shopper's own
+ *   account at that store, which the shopper gives once on Agentcard's own page. An eval must never use a real account,
+ *   so until a person saves a test account for a store (lib/store-accounts.ts), "got to the checkout step" there means:
+ *   the cart is right and the shopper is handed that sign-in (`next_action: store_login`, a `store_login` link). A store
+ *   that asks for the sign-in before it builds any cart is the store's own answer, "no test account at this store", when
+ *   the sign-in came first, before any other question. A sign-in asked for after other questions is a failure: the
+ *   shopper answered them for nothing.
  * - A store that prices its tax only once a card is in hands over the approval page before the final total. Being
  *   handed that page counts as the payment step, and the eval stops there without opening it. The cart must have been
  *   shown first: an approval asked for before any cart is a failure.
@@ -54,19 +60,61 @@ import { STORES, SUPPLIERS, type StoreCase } from "../lib/stores.js";
  * WHAT IS NEITHER A PASS NOR A FAILURE
  *
  * The store's own answer is its own kind of result (lib/store-answer.ts, lib/outcome.ts): out of stock, a price other
- * than the card's, no seats or availability, and its own account needed. So are a mistake of the example chat app,
- * which answered the shopper itself instead of calling the buy tool, and a connection that dropped twice. The daily run
- * sends each eval three times and reports how many of the three passed.
+ * than the card's, no seats or availability, its own account needed with no test account to sign in with, and slow to
+ * price. So are a mistake of the example chat app, which answered the shopper itself instead of calling the buy tool,
+ * and a connection that broke in two chats running (a chat whose connection breaks runs once more from its first
+ * message, lib/connection.ts). The daily run sends each eval three times, one run after another
+ * (lib/one-after-another.ts), and reports how many of the three passed.
  */
 const PAYMENT_STOPS = ["sandbox_mode", "test_card_missing"];
 
-/** How long the shopper waits for a store to price the order after their yes, asking for an update every half minute. */
-const PRICING_WITHIN_MS = 10 * 60_000;
+/** How long one run of a checkout eval may take: a store's own checkout can take minutes to price, and a retailer up to ten more after the yes. */
+const RUN_LIMIT_MS = 1_800_000;
 
-/** Everything after the chat got as far as it could: the cart's checks, then the yes for goods and food. */
-async function finish(t: EveEvalContext, row: StoreCase, purchase: Purchase): Promise<void> {
-  if (endedElsewhere(purchase)) return;
-  if (!checkReached(t, purchase, "ready-to-pay", "the purchase gets to the final cart and the ask for a yes")) return;
+/** The yes and what it led to: the last answer, when the yes was said, and every answer the shopper read while the store priced the order. */
+interface Yes {
+  step: Step | null;
+  waitedMs: number;
+  waited: Step[];
+}
+
+/** One chat: the shopper walks the purchase to the ask for a yes, then, for goods and food, says the yes. Checks nothing. */
+async function talk(t: EveEvalContext, row: StoreCase): Promise<{ purchase: Purchase; yes: Yes | null; broke: string | null }> {
+  const purchase = await shop(t, row, "checkout");
+  const ready = cartStep(purchase);
+  if (endedElsewhere(purchase) || purchase.stopped !== null || purchase.handed !== null || !ready || row.kind === "booking") return { purchase, yes: null, broke: purchase.broke };
+
+  // The yes. A store that is still pricing the order's tax and shipping can take several minutes to send its total: the
+  // shopper waits half a minute and asks for an update, never a second yes, for about ten minutes at most. A store may
+  // then answer with its newly priced total and ask again, and that yes names the total, as a shopper would, so it is
+  // never read as the yes to the old one.
+  let step = await purchase.say("yes", true);
+  const since = Date.now();
+  const waited: Step[] = [];
+  for (let repriced = 0; step && step.answer?.status === "needs_input"; ) {
+    // After a few minutes Agentcard offers to keep waiting or to look at another store. The shopper keeps waiting, up to
+    // the same limit: the store's own total is what they would say yes to.
+    const offersToWait = KEEP_WAITING.test(step.answer.reply);
+    if (stillPricing(step.answer) || offersToWait) {
+      waited.push(step);
+      if (Date.now() - since > PRICING_WITHIN_MS) break;
+      await t.sleep(30_000);
+      step = await purchase.say(offersToWait ? "keep waiting" : "any update?", true, "waiting");
+    } else if (readyForTheYes(step.answer) && repriced < 3) {
+      repriced += 1;
+      step = await purchase.say(step.answer.cart?.total ? `yes, place the order for ${step.answer.cart.total}` : "yes, place the order", true);
+    } else break;
+  }
+  return { purchase, yes: { step, waitedMs: Date.now() - since, waited }, broke: purchase.broke };
+}
+
+/** Everything after the chat got as far as it could: the cart's checks, then what the yes led to, for goods and food. */
+function finish(t: EveEvalContext, row: StoreCase, purchase: Purchase, yes: Yes | null): void {
+  // The yes is said only once the chat reached the ask for it, so a chat with a yes got there, whatever the yes led to.
+  if (!yes) {
+    if (endedElsewhere(purchase)) return;
+    if (!checkReached(t, purchase, "ready-to-pay", "the purchase gets to the final cart and the ask for a yes")) return;
+  } else t.check(true, satisfies((reached: boolean) => reached, "the purchase gets to the final cart and the ask for a yes")).label("ready-to-pay");
   const ready = cartStep(purchase);
   const last = purchase.steps.at(-1)!;
   if (ready) {
@@ -77,7 +125,7 @@ async function finish(t: EveEvalContext, row: StoreCase, purchase: Purchase): Pr
   if (purchase.handed === "sign-in") {
     // The store, or the delivery service, wants the shopper's own account next. The cart is built; the eval stops here.
     const links = last.answer?.links_sent ?? [];
-    t.check(links, satisfies((sent: string[]) => sent.includes("store_login"), `the shopper is handed the sign-in page of their own account (links sent: ${links.join(", ") || "none"})`)).label("handed-the-sign-in");
+    t.check(links, satisfies(() => needsAccount({ code: null, nextAction: last.answer?.next_action ?? null, links }), `the shopper is handed the sign-in to their own account (next step ${last.answer?.next_action ?? "none"}, links sent: ${links.join(", ") || "none"})`)).label("handed-the-sign-in");
     t.log("stopped at the sign-in: no eval signs in to a store or delivery account");
     return;
   }
@@ -96,26 +144,8 @@ async function finish(t: EveEvalContext, row: StoreCase, purchase: Purchase): Pr
     return;
   }
 
-  // The yes. A store that is still pricing the order's tax and shipping can take several minutes to send its total: the
-  // shopper waits half a minute and asks for an update, never a second yes, for about ten minutes at most. A store may
-  // then answer with its newly priced total and ask again, and that yes names the total, as a shopper would, so it is
-  // never read as the yes to the old one.
-  let step = await purchase.say("yes", true);
-  const since = Date.now();
-  for (let repriced = 0; step && step.answer?.status === "needs_input"; ) {
-    // After a few minutes Agentcard offers to keep waiting or to look at another store. The shopper keeps waiting, up to
-    // the same limit: the store's own total is what they would say yes to.
-    const offersToWait = /\bkeep waiting\b/i.test(step.answer.reply);
-    if (stillPricing(step.answer) || offersToWait) {
-      if (Date.now() - since > PRICING_WITHIN_MS) break;
-      await t.sleep(30_000);
-      step = await purchase.say(offersToWait ? "keep waiting" : "any update?", true, "waiting");
-    } else if (readyForTheYes(step.answer) && repriced < 3) {
-      repriced += 1;
-      step = await purchase.say(step.answer.cart?.total ? `yes, place the order for ${step.answer.cart.total}` : "yes, place the order", true);
-    } else break;
-  }
-  if (endedElsewhere(purchase)) return;
+  if (endedElsewhere(purchase) || !yes) return;
+  const step = yes.step;
   if (!checkReached(t, purchase, "yes-answered", "the yes gets an answer") || !step) return;
   const status = step.answer?.status ?? "no answer";
   const stop = step.snapshot?.decline_code ?? null;
@@ -123,31 +153,37 @@ async function finish(t: EveEvalContext, row: StoreCase, purchase: Purchase): Pr
   const atPayment = (status === "declined" && stop !== null && PAYMENT_STOPS.includes(stop)) || (status === "needs_card" && links.includes("vault")) || (status === "approval_sent" && links.includes("approval"));
   if (!atPayment) {
     // The store answered the yes itself: it has none left, or charges another price than the card showed. A price the
-    // cart already showed before the yes is not news, so only one that appeared with this answer counts.
-    purchase.storeAnswer = storeAnswerOf({ code: stop ?? step.snapshot?.error_code ?? null, reply: step.answer?.reply ?? "", booking: false, priceChanged: Boolean(step.answer?.cart?.price_change) && !ready.answer?.cart?.price_change });
+    // cart already showed before the yes is not news, so only one that appeared with this answer counts. A store that
+    // sent no total in the time the shopper waited, while Agentcard kept them told, is the store's own answer too.
+    purchase.storeAnswer =
+      storeAnswerOf({ code: stop ?? step.snapshot?.error_code ?? null, reply: step.answer?.reply ?? "", booking: false, priceChanged: Boolean(step.answer?.cart?.price_change) && !ready.answer?.cart?.price_change }) ??
+      slowToPrice([...new Set([...yes.waited, step])], yes.waitedMs, "after the yes");
     if (purchase.storeAnswer) return;
   }
-  const waited = Math.round((Date.now() - since) / 60_000);
-  t.check(atPayment, satisfies((reached: boolean) => reached, `the yes is stopped at the payment step (status ${status}, reason ${stop ?? "none"}, links ${links.join(", ") || "none"}${stillPricing(step.answer ?? null) ? `; the store had still not sent its total ${waited} minutes after the yes` : ""}; Agentcard said: ${(step.answer?.reply ?? "").replace(/\s+/g, " ").slice(0, 240)})`)).label("stopped-at-payment");
+  const waited = Math.round(yes.waitedMs / 60_000);
+  t.check(atPayment, satisfies((reached: boolean) => reached, `the yes is stopped at the payment step (status ${status}, reason ${stop ?? "none"}, links ${links.join(", ") || "none"}${stillPricing(step.answer ?? null) ? `; the store had still not sent its total ${waited} minutes after the yes, and Agentcard did not keep the shopper told and offer to keep waiting or to try another store` : ""}; Agentcard said: ${(step.answer?.reply ?? "").replace(/\s+/g, " ").slice(0, 240)})`)).label("stopped-at-payment");
 }
 
-export default STORES.map((row) =>
-  defineEval({
-    description: `checkout: ${row.store}, through the ${SUPPLIERS[row.supplier]}`,
+export default STORES.map((row) => {
+  const description = `checkout: ${row.store}, through the ${SUPPLIERS[row.supplier]}`;
+  return defineEval({
+    description,
     tags: ["checkout", row.kind],
     metadata: { ask: row.ask, store: row.store, supplier: SUPPLIERS[row.supplier] },
-    // A store's own checkout can take a few minutes to price a cart, and a retailer up to ten more to price the yes.
-    timeoutMs: 1_800_000,
+    // Each run of this eval waits for the one before it (lib/one-after-another.ts), so its limit covers theirs too.
+    timeoutMs: limitFor(RUN_LIMIT_MS),
     async test(t) {
       if (row.skip) t.skip(row.skip);
       if (row.skipCheckout) t.skip(row.skipCheckout);
       if (!(await sandboxCredentials())) t.skip("The checkout evals run with sandbox (test mode) credentials only, where no yes can place an order.");
 
-      const purchase = await shop(t, row, "checkout");
-      t.succeeded();
-      await finish(t, row, purchase);
-      checkTotalNeverMovesSilently(t, purchase);
-      checkChat(t, row, purchase);
+      await oneAfterAnother(description, RUN_LIMIT_MS, async () => {
+        const { purchase, yes } = await chatAgainOnce(() => talk(t, row), (line) => t.log(line));
+        t.succeeded();
+        finish(t, row, purchase, yes);
+        checkTotalNeverMovesSilently(t, purchase);
+        checkChat(t, row, purchase);
+      });
     },
-  }),
-);
+  });
+});

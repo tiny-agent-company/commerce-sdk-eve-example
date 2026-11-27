@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { amountsIn, needsAccount, offersAnotherStore, storeAnswerOf } from "./store-answer.ts";
+import { amountsIn, asksPasswordInChat, needsAccount, noRoomByCode, storeAnswerOf } from "./store-answer.ts";
 
 test("a stop code that says sold out is the store's own answer, read from the field", () => {
   const answer = storeAnswerOf({ code: "product_out_of_stock", reply: "I couldn't add it.", booking: false });
@@ -57,10 +57,32 @@ test("a sign-in step, link or code says the store needs the shopper's account", 
   assert.ok(!needsAccount({ code: "sandbox_mode", nextAction: "confirm", links: ["approval"] }));
 });
 
-test("another store offered beside the sign-in is read from the answer's stores, else from its words", () => {
-  assert.deepEqual(offersAnotherStore("Sephora needs an account to check out. Sign in once through this link.", ["Ulta Beauty"]), { offered: true, readFrom: "the answer's fields" });
-  assert.equal(offersAnotherStore("Sephora needs an account to check out. Sign in once, or I can get the same serum from another store with no account.", []).readFrom, "the reply's words");
-  assert.equal(offersAnotherStore("Sephora needs an account to check out. Sign in once through this link, then reply that you're done.", []).offered, false);
+test("the page where the shopper gives their own store account is a sign-in step too", () => {
+  assert.ok(needsAccount({ code: null, nextAction: "store_account", links: [] }));
+  assert.ok(needsAccount({ code: null, nextAction: null, links: ["store_credentials"] }));
+  assert.ok(!needsAccount({ code: null, nextAction: "shipping_details", links: ["product"] }));
+});
+
+test("a password asked for in the chat is told apart from one asked for on Agentcard's page", () => {
+  assert.ok(asksPasswordInChat("Costco needs your account. Send me your Costco email and password here and I'll sign in."));
+  assert.ok(asksPasswordInChat("What's your password for Target?"));
+  assert.ok(!asksPasswordInChat("Costco needs your own account. Enter your email and password on this page, and I'll sign in for you."));
+  assert.ok(!asksPasswordInChat("Never type your password in the chat. Costco texted you a code: send me the code here."));
+  assert.ok(!asksPasswordInChat("Send me the 6-digit code Costco texted you."));
+});
+
+test("a booking's no_availability code is read first, before any words", () => {
+  assert.ok(noRoomByCode("no_availability"));
+  assert.ok(!noRoomByCode("merchant_unavailable"));
+  const answer = storeAnswerOf({ code: "no_availability", reply: "The price changed to $40 for the 9am class.", booking: true });
+  assert.equal(answer?.what, "no seats or availability");
+  assert.equal(answer?.read_from, "the answer's fields");
+});
+
+test("nothing to book and no pairs of tickets are no seats, in a booking's words", () => {
+  assert.equal(storeAnswerOf({ code: null, reply: "I checked all eight January games and there's nothing to book for two right now.", booking: true })?.what, "no seats or availability");
+  assert.equal(storeAnswerOf({ code: null, reply: "There are no pairs of tickets listed for any of those games.", booking: true })?.what, "no seats or availability");
+  assert.equal(storeAnswerOf({ code: null, reply: "I found nothing available to book in those dates.", booking: true })?.what, "no seats or availability");
 });
 
 test("amounts are read in cents, thousands and all", () => {

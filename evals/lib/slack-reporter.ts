@@ -76,12 +76,13 @@ async function send(token: string, body: Record<string, unknown>): Promise<strin
 
 /**
  * The eval's conversation, word for word: each message sent to the agent and each reply it gave, in order. The
- * agent's replies within one turn are joined into one.
+ * agent's replies within one turn are joined into one. When the chat ran again in a fresh chat because its connection
+ * broke (lib/connection.ts), the last chat is the one shown: it is the one the eval was graded on.
  */
 function conversationOf(result: EveEvalResult): Run["messages"] {
-  const events = result.result.sessions?.[0]?.events ?? result.result.events;
+  const chats = (result.result.sessions ?? []).map((session) => transcriptOf(session.events).messages).filter((messages) => messages.length > 0);
   const messages: Run["messages"] = [];
-  for (const message of transcriptOf(events).messages) {
+  for (const message of chats.at(-1) ?? transcriptOf(result.result.events).messages) {
     const last = messages.at(-1);
     if (last && last.role === message.role) last.text = `${last.text}\n\n${message.text}`;
     else messages.push({ role: message.role, text: message.text });

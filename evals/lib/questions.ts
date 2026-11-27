@@ -187,3 +187,33 @@ export function showsSize(text: string, size: string): boolean {
   const value = size.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(?<![\\d.$])${value}(?![\\d]|\\.\\d)`, "i").test(text);
 }
+
+/** Words that say a product cannot be had as named: sold out, out of stock, not offered or not sold in it. */
+const NOT_OFFERED = /\b(sold out|out of stock|unavailable|not available|isn't available|is not available|aren't available|not offered|isn't offered|not sold|isn't sold|doesn't come|does not come|don't come|isn't made|not made)\b/i;
+
+/** The parts of a reply that say one thing each: its sentences, and the two sides of a "but" or a semicolon. */
+const clauses = (reply: string) => reply.split(/(?<=[.?!])\s+|\n+|;|\bbut\b|,\s*(?:though|while|whereas)\b/i);
+
+/**
+ * The colour or the size the shopper asked for, when a reply says the product is not offered in it, else null: "M is
+ * sold out" to a shopper who asked for a medium, "It doesn't come in black". Only the part of a sentence that says what
+ * is not offered is read, so "S is sold out, but M is in stock" says nothing against a medium.
+ */
+export function askedNotOffered(reply: string, asked: { color?: string; size?: string }): string | null {
+  for (const part of clauses(reply)) {
+    if (!NOT_OFFERED.test(part)) continue;
+    if (asked.size && showsSize(part, asked.size)) return asked.size;
+    if (asked.color && showsColor(part, asked.color)) return asked.color;
+  }
+  return null;
+}
+
+/**
+ * True when a reply goes back to the shopper because something they asked for is not offered, and asks what they want
+ * instead: "This shirt comes in black in S, L and XL. M is sold out. Which one, or should I look for another shirt?".
+ * Agentcard read those options off the product's own page, so asking about a size or a colour again here is fair: the
+ * answer the shopper gave cannot be had.
+ */
+export function offersThePagesOptions(reply: string): boolean {
+  return reply.includes("?") && clauses(reply).some((part) => NOT_OFFERED.test(part));
+}

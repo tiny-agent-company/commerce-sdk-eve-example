@@ -107,6 +107,12 @@ export interface StoreCase {
    * built on the Commerce SDK sends the card's line again with the value added, price included.
    */
   choiceAs?: (value: string, picked: { name: string; price: string | null } | null) => string;
+  /**
+   * True for a store the evals have seen sell only to a shopper signed in to their own account there. Its rows also get
+   * an eval of their own in buy/store-account.eval.ts. Agentcard learns this about a store by itself; this field only
+   * says which rows to watch it on.
+   */
+  needsAccount?: true;
   /** Set when neither eval can run safely or at all: the eval is skipped with this as the reason. */
   skip?: string;
   /** Set when the cart can be checked but the checkout step cannot be reached safely: only the checkout eval is skipped. */
@@ -128,7 +134,8 @@ const gap: StoreCase = { ...retailer("Gap", /gap/i, "a black cotton crewneck t-s
 const uniqlo: StoreCase = { ...retailer("Uniqlo", /uniqlo/i, "a white AIRism cotton crew neck t-shirt for men in size medium from Uniqlo", /airism/i), size: "medium", color: "white" };
 const ace = retailer("Ace Hardware", /ace/i, "a Stanley 16 ounce claw hammer from Ace Hardware", /hammer/i);
 const ebay = retailer("eBay", /ebay/i, "a new stainless steel water bottle on eBay, Buy It Now", /bottle/i);
-const tiktok = retailer("TikTok Shop", /tiktok/i, "a stainless steel water bottle from TikTok Shop", /bottle|tumbler/i);
+// TikTok Shop's "Add to cart" leads to its sign-in (2026-11-27).
+const tiktok: StoreCase = { ...retailer("TikTok Shop", /tiktok/i, "a stainless steel water bottle from TikTok Shop", /bottle|tumbler/i), needsAccount: true };
 const mcmaster = retailer("McMaster-Carr", /mcmaster/i, "a pack of M6 stainless steel socket head screws from McMaster-Carr", /screw/i);
 
 const retailers: StoreCase[] = [
@@ -182,9 +189,10 @@ const otherStores: StoreCase[] = [
     skip: "AutoZone's checkout refuses the shopper's placeholder phone number, which is from the range reserved for fiction, and an eval must not give a real person's number.",
   },
   { store: "Allbirds (a brand's own site)", supplier: "own site", kind: "goods", ask: "Allbirds Tree Runners, men's size 10, from allbirds.com", at: /allbirds/i, product: /tree runner/i, maxPrice: 160, size: "10" },
-  // Costco checks out only on the shopper's own Costco account. That is the store's own answer, so the eval runs and reports
-  // it as one: the sign-in offered first, with another store as the alternative (lib/store-answer.ts).
-  { store: "Costco (a store's own brand)", supplier: "own site", kind: "goods", ask: "Kirkland Signature extra virgin olive oil from Costco", at: /costco/i, product: /olive oil/i, maxPrice: 60 },
+  // Costco checks out only on the shopper's own Costco account. Agentcard signs in with it, and the evals have no test
+  // account there yet, so the eval runs and reports that as the store's own answer when the sign-in comes first
+  // (lib/store-accounts.ts).
+  { store: "Costco (a store's own brand)", supplier: "own site", kind: "goods", ask: "Kirkland Signature extra virgin olive oil from Costco", at: /costco/i, product: /olive oil/i, maxPrice: 60, needsAccount: true },
   { store: "eBay, a used listing", supplier: "used listings", kind: "goods", ask: "a used Canon AE-1 film camera on eBay", at: /ebay/i, product: /canon/i, maxPrice: 250 },
   { store: "a specialty coffee roaster", supplier: "coffee", kind: "goods", ask: "a bag of specialty whole bean coffee from Onyx Coffee Lab's own site", product: /coffee|onyx/i, maxPrice: 60 },
   {
