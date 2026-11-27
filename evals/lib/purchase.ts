@@ -286,6 +286,8 @@ interface Said {
   reasked: (line: string) => void;
   /** Why the shopper cannot answer the last question, when they cannot: the colour or the size they asked for is not offered. */
   cannot?: string;
+  /** The card the shopper picked, once they picked one. */
+  picked: () => Card | null;
 }
 
 /**
@@ -461,6 +463,13 @@ function nextMessage(answer: Answer, row: StoreCase, said: Said): string | null 
   }
   // "I couldn't get through the checkout. Want me to try it again?": a shopper says yes, once. A second failure ends the chat.
   if (!answer.cart && OFFERS_TO_RETRY.test(reply) && !sent.has("yes, try again")) return "yes, try again";
+  // "Your message points to two different shoes. Which one do you want?": the shopper answers with the name of the card
+  // they picked, alone, which is never ambiguous.
+  const picked = said.picked();
+  if (picked && !answer.cart && /which (one|of)/i.test(reply) && reply.toLowerCase().includes(picked.name.toLowerCase().slice(0, 40)) && !sent.has(picked.name)) {
+    sent.add(picked.name);
+    return picked.name;
+  }
   // Two products told apart by number: the first one at the store the shopper named.
   if (!answer.cart && !elsewhere && /which (one|of)/i.test(reply)) {
     const numbered = [...reply.matchAll(/^\s*(\d+)[.)]\s+(.+)$/gm)].find((line) => atNamedStore(line[2]!, row));
@@ -540,6 +549,7 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
       return row.choiceAs ? row.choiceAs(value, purchase.picked) : value;
     },
     words: () => purchase.steps.map((step) => step.said).join("\n"),
+    picked: () => purchase.picked,
     unfair: (line) => purchase.unfair.push(`after "${short(purchase.steps.at(-1)?.said ?? "", 60)}" ${line}`),
     reasked: (line) => purchase.reasked.push(`after "${short(purchase.steps.at(-1)?.said ?? "", 60)}" ${line}`),
   };

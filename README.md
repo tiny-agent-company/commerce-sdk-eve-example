@@ -319,7 +319,7 @@ Run it once a day after 12:00 UTC, so that a follow-up sent in the twelve hours 
 
 ### Scheduled runs on Modal
 
-[`modal_app.py`](modal_app.py) runs the evals on [Modal](https://modal.com): the core set every six hours, the coverage matrix and the reviewed real asks once a day, and the cart and checkout evals once a day in a run of their own, each sent three times, because each is a chat of several messages with a live store. That run takes about an hour and a half and has six hours before Modal stops it. The job that picks the real asks does not run on Modal. Each run checks out the current `main` first, so a merged change is picked up by the next run with no new deploy.
+[`modal_app.py`](modal_app.py) runs the evals on [Modal](https://modal.com): the core set every six hours, the coverage matrix and the reviewed real asks once a day, and the cart and checkout evals once a day in a run of their own, each sent three times, because each is a chat of several messages with a live store. That run took 102 minutes on 2026-11-26 and has six hours before Modal stops it. The job that picks the real asks does not run on Modal. Each run checks out the current `main` first, so a merged change is picked up by the next run with no new deploy.
 
 ```bash
 modal deploy modal_app.py            # once, and again only when modal_app.py changes
