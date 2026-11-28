@@ -69,6 +69,8 @@ export interface Reading {
   storeSays: "out_of_stock" | "price_differs" | "no_availability" | "checkout_closed" | "no_longer_available" | null;
   /** True when the reply offers the shopper a way on: the same item at another store, or a later time to try. */
   offersNextStep: boolean;
+  /** Each charge the reply names as part of this cart's total beyond its lines: shipping, tax, a fee, a discount, with its amount. */
+  charges: { kind: "shipping" | "tax" | "fee" | "discount"; amount: string }[];
 }
 
 /** A contact detail a booking or a guest checkout asks for. */
@@ -150,6 +152,9 @@ const Shape = z.object({
     .describe(
       "What the reply says the store itself answered: out_of_stock when the product is sold out or out of stock; price_differs when the store charges another price than the card showed, with that price; no_availability when a booking has no seats, rooms, tables, tickets or times in the dates asked, or nothing to book; checkout_closed when the store has closed its online checkout for now, such as for a holiday or the Sabbath, often with when it opens again; no_longer_available when the store or its supplier says, while pricing or checking out, that the item can no longer be bought. none otherwise, including a store that could not be reached, a site that would not respond, or a checkout Agentcard could not get through.",
     ),
+  charges: z
+    .array(z.object({ kind: z.enum(["shipping", "tax", "fee", "discount"]), amount: z.string().describe("As the reply writes it, such as $12.95.") }))
+    .describe("Each charge the reply names, with an amount, as part of this cart's total beyond the price of its lines: shipping, tax, a service or other fee, or a discount. Empty when it names none with an amount."),
   offers_next_step: z.boolean().describe("True when the reply offers the shopper a way on: the same item at another store (offered, or already put in a cart there), or a later time: telling the shopper when the store opens again or when to try again counts, even with no question. False when it only says what happened and names neither."),
 });
 
@@ -212,6 +217,7 @@ export const modelReader: Reader = async (input) => {
     offerAt: output.offer_at,
     storeSays: output.store_says === "none" ? null : output.store_says,
     offersNextStep: output.offers_next_step,
+    charges: output.charges,
   };
 };
 

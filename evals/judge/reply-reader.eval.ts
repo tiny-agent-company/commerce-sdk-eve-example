@@ -39,6 +39,8 @@ interface Case {
   /** False when every product the reply offers misses the shopper's ask. */
   productsFit?: boolean;
   offersNextStep?: boolean;
+  /** The charges the reply names beyond the lines, by kind. */
+  charges?: string[];
 }
 
 const cases: Case[] = [
@@ -55,6 +57,7 @@ const cases: Case[] = [
     cart: exact("$21.63", "$7.99"),
     asks: "pay_or_book",
     quotesTheCharge: true,
+    charges: ["shipping", "tax"],
     wrong: false,
   },
   {
@@ -64,6 +67,7 @@ const cases: Case[] = [
     earlier: ["$26.99"],
     asks: "pay_or_book",
     quotesTheCharge: true,
+    charges: ["shipping", "tax"],
     wrong: false,
   },
   {
@@ -395,6 +399,7 @@ export default [
       if (one.alreadySaid !== undefined) score("reads-a-question-already-answered", reading.alreadySaid.length > 0 === one.alreadySaid, `expected ${one.alreadySaid ? "a question already answered" : "none"}, read ${JSON.stringify(reading.alreadySaid)}`);
       if (one.offerAt !== undefined) score("reads-where-an-offer-is", (reading.offerAt ?? "").toLowerCase().includes((one.offerAt ?? "").toLowerCase().slice(0, 4)) && (one.offerAt === null) === (reading.offerAt === null), `expected ${one.offerAt}, read ${reading.offerAt}`);
       if (one.storeSays !== undefined) score("reads-the-stores-answer", reading.storeSays === one.storeSays, `expected ${one.storeSays}, read ${reading.storeSays}`);
+      if (one.charges) score("reads-the-charges", [...reading.charges.map((charge) => charge.kind)].sort().join() === [...one.charges].sort().join(), `expected ${one.charges.join(", ")}, read ${JSON.stringify(reading.charges)}`);
       if (one.offersNextStep !== undefined) score("reads-a-way-on", reading.offersNextStep === one.offersNextStep, `expected ${one.offersNextStep}, read ${reading.offersNextStep}`);
       if (one.productsFit !== undefined) score("reads-whether-products-fit", reading.products.some((product) => product.fitsTheAsk) === one.productsFit, `expected ${one.productsFit ? "a product that fits" : "no product that fits"}, read ${JSON.stringify(reading.products)}`);
       if (one.products !== undefined) score("reads-the-products-offered", reading.products.length === one.products, `expected ${one.products}, read ${reading.products.length}`);

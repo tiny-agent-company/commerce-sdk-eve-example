@@ -104,6 +104,13 @@ export function storeAnswerOf(facts: AnswerFacts): StoreAnswer | null {
 const CLOSED_CODE = /^(checkout_closed|store_closed)$/;
 
 /**
+ * The stop codes that are Agentcard's own reading of a store's page, never the store's word: it did not find the product
+ * there, or ended up off the product's page. A reply that then says the item is "no longer" on the store is Agentcard's
+ * reading too, so it is never the store's own answer (2026-11-28, McMaster-Carr: "no longer shows … on its page").
+ */
+const OWN_READING_CODE = /^(product_not_found|off_product_page)$/;
+
+/**
  * The store's own answer "closed for now" or "no longer available", or null. Read from the stop code first, then from the
  * reply's reading. A way on must be offered, as the reply's reading says; with no reading, a closed code alone counts.
  */
@@ -112,7 +119,7 @@ export function closedOrGoneOf(facts: Pick<AnswerFacts, "code" | "reply" | "said
   const wayOn = facts.offersNextStep;
   if (CLOSED_CODE.test((facts.code ?? "").toLowerCase()) && wayOn !== false) return { what: "the store's checkout is closed for now", read_from: "the answer's fields", said };
   if (facts.said === "checkout_closed" && wayOn) return { what: "the store's checkout is closed for now", read_from: "the reply's words", said };
-  if (facts.said === "no_longer_available" && wayOn) return { what: "the item is no longer available", read_from: "the reply's words", said };
+  if (facts.said === "no_longer_available" && wayOn && !OWN_READING_CODE.test((facts.code ?? "").toLowerCase())) return { what: "the item is no longer available", read_from: "the reply's words", said };
   return null;
 }
 
