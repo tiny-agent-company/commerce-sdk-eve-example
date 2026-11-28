@@ -6,9 +6,9 @@ import { buyCalls, cardsShown, checkTurn, checkWordsUnchanged, dollars, lastAnsw
 import { ChatBroke, deliver, type Chat } from "./connection.ts";
 import { cardDays, daysIn, inWindow } from "./dates.ts";
 import { OUTCOME, type Outcome } from "./outcome.ts";
-import { askedNotOffered, inlineChoice, namesAnotherColor, namesAnotherSize, offersThePagesOptions, pickValue, saidValue, showsColor, showsSize, unfairQuestions, valueOf, type Group } from "./questions.ts";
+import { namesAnotherColor, namesAnotherSize, placeholderNames, showsColor, showsSize, valueOf, type Group } from "./questions.ts";
 import { amountsIn, asksPasswordInChat, needsAccount, noRoomByCode, storeAnswerOf, type StoreAnswer } from "./store-answer.ts";
-import { readReply, type Reading } from "./reply-reader.ts";
+import { readReply, type Detail as ReadDetail, type Reading } from "./reply-reader.ts";
 import { savedAccountAt } from "./store-accounts.ts";
 import { SUPPLIERS, type StoreCase } from "./stores.ts";
 
@@ -261,22 +261,16 @@ export function logPath(t: EveEvalContext, row: StoreCase, merchant: string | un
 
 const short = (text: string, most = 220) => text.replace(/https?:\/\/\S+/g, "(a link)").replace(/\s+/g, " ").trim().slice(0, most);
 
-/** A phone number, however the reply words it: "phone", "mobile", "cell number", "a number we can text". */
-export const ASKS_PHONE = /\bphone\b|\bmobile\b|\bcell\b|\bcellphone\b|contact number|number (to|we can|i can|they can) (reach|text|call)/i;
-
 type Detail = "name" | "bornOn" | "gender" | "email" | "phone";
 
-/** How a reply asks for each detail, and what the detail is called in a check's message. */
-const DETAILS: [Detail, RegExp, string][] = [
-  ["name", /\bname\b/i, "name"],
-  ["bornOn", /date of birth|birth ?date|\bdob\b/i, "date of birth"],
-  ["gender", /\bgender\b/i, "gender"],
-  ["email", /e-?mail/i, "email"],
-  ["phone", ASKS_PHONE, "phone number"],
-];
-
-/** A reason a reply gives for not taking a detail: why, not only that. */
-export const GIVES_A_REASON = /\bbecause\b|\bsince\b|\bas (it|that|they)\b|\b(isn't|is not|not|aren't) (a )?(valid|real|accepted|allowed|usable)\b|\binvalid\b|\btest\b|\bexample\b|\bplaceholder\b|\breserved\b|\bfiction|\b555\b|\b(can't|cannot|won't|doesn't|don't|does not|didn't|did not|wouldn't) (accept|take|use|allow)\b|\brefus|\bneeds? (a|an|your) (real|own|working|mobile|different)|\bhas \d+ digits\b/i;
+/** Each detail as the reply's reader names it (lib/reply-reader.ts), and as a check's message names it. */
+const DETAIL_NAMES: Record<ReadDetail, { detail: Detail; words: string }> = {
+  name: { detail: "name", words: "name" },
+  date_of_birth: { detail: "bornOn", words: "date of birth" },
+  gender: { detail: "gender", words: "gender" },
+  email: { detail: "email", words: "email" },
+  phone: { detail: "phone", words: "phone number" },
+};
 
 /** What the shopper has typed and chosen so far in one chat, which decides what they say next. */
 interface Said {
@@ -311,6 +305,7 @@ interface Said {
 
 /**
  * The details a reply asks the shopper for, as one message, or null when it asks for none the shopper can still give.
+ * Which details it asks for, and whether it says why one was not taken, is its reading (lib/reply-reader.ts).
  *
  * The first time, everything the reply names goes in one message. After that only what the reply still needs: "Thanks,
  * I have your phone. I still need your name." gets the name. A detail asked for again after the shopper gave it gets
@@ -320,29 +315,22 @@ interface Said {
  * A detail counts as given once a message that carried it reached Agentcard (`gave` is kept by the sender, not here): a
  * message the example chat app answered itself never got there, so asking for its details is not asking again.
  */
-function detailsAskedFor(reply: string, said: Said): string | null {
-  const named = (text: string) => DETAILS.filter(([, asks]) => asks.test(text)).map(([detail]) => detail);
+function detailsAskedFor(reply: string, reading: Reading | null, said: Said): string | null {
   const given = (detail: Detail) => said.contacts.some((contact) => said.gave.has(contact[detail]));
-  // A line that thanks the shopper for a detail names it without asking for it: "I have the name (Jane Doe) and phone
-  // number. What's the delivery address?" asks for no detail at all.
-  const asked = named(reply.split(/(?<=[.?!])\s+|\n+/).filter((line) => !/\b(i have|i've got|i've noted|i've saved|i saved|noted your|saved (your|that)|is saved|are saved|already|came through|i got|got your|thanks for)\b/i.test(line)).join(" "));
+  const asked = (reading?.details ?? []).map((one) => DETAIL_NAMES[one]);
   if (asked.length === 0) return null;
-  const fresh = asked.filter((detail) => !given(detail));
+  const fresh = asked.filter(({ detail }) => !given(detail));
   const parts: string[] = [];
-  for (const detail of fresh.length > 0 ? fresh : asked) {
+  for (const { detail, words } of fresh.length > 0 ? fresh : asked) {
     // The first value of this detail not given yet, else the one given before, as long as it was given only once.
     const untried = said.contacts.map((contact) => contact[detail]).find((value) => !said.gave.has(value));
     const value = untried ?? said.contacts.map((contact) => contact[detail]).find((one) => (said.gave.get(one) ?? 0) < 2);
     if (!value) {
-      const [, , words] = DETAILS.find(([one]) => one === detail)!;
       said.cannot = `Agentcard asked once more for the ${words} the shopper had already given twice`;
       continue;
     }
     // Asked again for a detail Agentcard already has: fair only when the reply says it was not taken, and why.
-    if (given(detail)) {
-      const [, asks, words] = DETAILS.find(([one]) => one === detail)!;
-      if (!asks.test(reply) || !GIVES_A_REASON.test(reply)) said.reasked(`it asks again for the ${words} the shopper already gave, and does not say why it was not taken: ${short(reply, 160)}`);
-    }
+    if (given(detail) && !reading!.refused.some((one) => DETAIL_NAMES[one.detail].detail === detail && one.reasonGiven)) said.reasked(`it asks again for the ${words} the shopper already gave, and does not say why it was not taken: ${short(reply, 160)}`);
     parts.push(value);
   }
   return parts.length > 0 ? parts.join(", ") : null;
@@ -387,151 +375,98 @@ function atNamedStore(line: string, row: StoreCase): boolean {
 }
 
 /**
- * What the shopper says next, or null when the reply asks for nothing this shopper can give. A choice the shopper
- * already named is answered with the value they named. Which yes a reply asks for (to an address read back, to add a
- * product, to try again) is the reply's reading (lib/reply-reader.ts), never its words.
+ * What the shopper says next, or null when the reply asks for nothing this shopper can give.
+ *
+ * The answer's own fields come first: its `choice`, its `next_action`, its `products` and their stores. What is left to
+ * read in the reply's words (what it asks, which details, which choices it lists in words, which value fits the shopper's
+ * ask, where an offered product is sold) is its reading by a model (lib/reply-reader.ts), never a list of words.
  */
 function nextMessage(answer: Answer, reading: Reading | null, row: StoreCase, said: Said): string | null {
   const reply = answer.reply;
   const asks = reading?.asks ?? null;
   said.cannot = undefined;
   said.notOffered = undefined;
-  const { sent, options, choose } = said;
-  const words = said.words();
+  const { sent, choose } = said;
   const address = row.address ?? said.contacts[0]!.address;
   // The shopper only buys at the store they named. An answer whose every product is at another store offers nothing
   // they take: no yes, no pick from a list.
   const elsewhere = offeredElsewhere(answer, row);
+  const atNamed = (store: string | null) => !row.at || store === null || row.at.test(store);
   // What was already answered to this very question, so the same value is never given to it twice.
-  const question = (answer.choice?.question ?? reply.split(/\n/).find((line) => line.includes("?")) ?? reply).toLowerCase().replace(/\s+/g, " ").trim().slice(0, 200);
+  const question = (answer.choice?.question ?? reply).toLowerCase().replace(/\s+/g, " ").trim().slice(0, 200);
   const tried = said.tried.get(question) ?? new Set<string>();
   said.tried.set(question, tried);
   const give = (value: string) => {
     tried.add(value);
     return choose(value);
   };
-  // A required choice, such as a size or a taco's filling: the value the shopper already named, else the first the store
-  // lists. Choices nobody could answer, such as fifteen of them with placeholders for names, are not answered: the chat
-  // ends there, with that as its reason (lib/questions.ts).
-  // A shopper who asked for a colour or a size takes no other. When the store lists the product's colours or sizes and
-  // the one asked for is not among them, the shopper has nothing to answer, and the chat ends with that as its reason.
-  const notListed = (name: string, values: string[]): boolean => {
-    if (values.length === 0) return false;
-    const asked =
-      row.color && /colou?r/i.test(name)
-        ? { value: row.color, has: values.some((value) => showsColor(value, row.color!)) }
-        : row.size && /\bsizes?\b/i.test(name)
-          ? { value: row.size, has: values.some((value) => showsSize(value, row.size!) || saidValue(value, row.size!)) }
-          : null;
-    if (!asked || asked.has) return false;
-    said.cannot = `the product the shopper picked is not offered in ${asked.value}, which they asked for: the store lists ${values.slice(0, 8).join(", ")}`;
-    said.notOffered = true;
-    return true;
-  };
-  // The value of a choice that fits what the shopper asked for: the colour asked for in whatever words the store lists
-  // it ("Jet Black" for black), the size asked for, else the value they named, else the first the store lists.
-  const fitting = (group: Group): string | undefined => {
-    const values = group.options.map(valueOf).filter(Boolean);
-    if (row.color && /colou?r/i.test(group.name)) {
-      const color = values.find((value) => showsColor(value, row.color!));
-      if (color) return color;
+
+  // A choice the product has, such as a size or a taco's filling: from the answer's `choice` field, else as the reply
+  // lists it. The shopper gives the value that fits their ask ("Jet Black" for black), else the first that can be had.
+  // A shopper who asked for a colour or a size takes no other: when none of the values fits it, they have nothing to
+  // answer here, and pick another card that fits instead (see `shop`). Choices nobody could answer, such as several with
+  // placeholders for names, are not answered: the chat ends there, with that as its reason (lib/questions.ts).
+  const groups: Group[] = answer.choice?.groups.length ? answer.choice.groups : (reading?.choices ?? []).map((choice) => ({ name: choice.name, required: true, options: choice.values.filter((value) => !choice.unavailable.includes(value)) }));
+  if (groups.length > 0) {
+    if (placeholderNames(groups).length > 0) return null;
+    const required = groups.filter((group) => group.required);
+    const answering = required.length > 0 ? required : groups.slice(0, 1);
+    const values: string[] = [];
+    for (const group of answering) {
+      const fit = reading?.fits.find((one) => one.choice.toLowerCase() === group.name.toLowerCase());
+      if (fit && fit.value === null) {
+        said.cannot = `the product the shopper picked is not offered as they asked for ${group.name}: the store lists ${group.options.map(valueOf).slice(0, 8).join(", ") || "nothing that can be had"}. Agentcard said: ${short(reply, 200)}`;
+        said.notOffered = true;
+        return null;
+      }
+      const value = fit?.value ?? group.options.map(valueOf).find((one) => one && !tried.has(one));
+      if (value) values.push(value);
     }
-    if (row.size && /\bsizes?\b/i.test(group.name)) {
-      const size = values.find((value) => showsSize(value, row.size!) || saidValue(value, row.size!));
-      if (size) return size;
-    }
-    return pickValue(group, words, tried);
-  };
-  if (answer.choice?.groups.length) {
-    if (unfairQuestions(answer.choice.groups, "").some((line) => line.includes("placeholder for a name"))) return null;
-    const groups = answer.choice.groups.filter((group) => group.required);
-    const answering = groups.length > 0 ? groups : answer.choice.groups.slice(0, 1);
-    if (answering.some((group) => notListed(group.name, group.options.map(valueOf)))) return null;
-    const message = answering.map(fitting).filter(Boolean).join(", ");
+    const message = values.join(", ");
     if (message && !tried.has(message)) return give(message);
-  }
-  // "This shirt comes in black in S, L and XL. M is sold out. Which one, or should I look for another shirt?": the page's
-  // real options, without the colour or the size the shopper asked for. A shopper who asked for a medium takes no other
-  // size, so they have nothing to answer here, and pick another card that fits instead (see `shop`).
-  const missing = askedNotOffered(reply, row);
-  if (missing) {
-    said.cannot = `the product the shopper picked is not offered in ${missing}, which they asked for. Agentcard said: ${short(reply, 200)}`;
-    said.notOffered = true;
-    return null;
   }
   // The address read back: "Is it 1 Ferry Plz, San Francisco, CA 94111? Say yes, or send me the right address."
   if (asks === "confirm_address") return row.kind === "booking" ? null : "yes";
   // The details a booking or a guest checkout asks for.
-  if (/date of birth|\bgender\b|\be-?mail\b|full name|legal (first|name)|first and last name|what name|driver's details|guest details/i.test(reply) || (ASKS_PHONE.test(reply) && /\?|need/i.test(reply))) {
-    const details = detailsAskedFor(reply, said);
+  if (answer.next_action === "guest_details" || (reading?.details.length ?? 0) > 0) {
+    const details = detailsAskedFor(reply, reading, said);
     if (details) return details;
   }
-  if (answer.next_action === "shipping_details" || /(where|what|which|send|need).{0,60}(address|deliver|ship|zip)/i.test(reply)) return sent.has(address) ? null : address;
-  if (/as it comes|the standard way|or changed\?/i.test(reply)) return "as it comes";
-  // How many: the number the shopper asked for. Asking is fair only when their words did not already say it.
-  const howMany = reply.match(/\bhow many (tickets?|seats?|people|guests?|adults?|travell?ers?|passengers?|nights?|of (?:them|these|those)|do you (?:want|need))\b/i);
-  if (howMany && !answer.cart) {
+  if (answer.next_action === "shipping_details" || asks === "address") return sent.has(address) ? null : address;
+  if (asks === "as_listed") return "as it comes";
+  // How many: the number the shopper asked for. A question about a number they already gave is counted unfair from the
+  // reading (`alreadySaid`), with every other such question.
+  if (asks === "how_many" && !answer.cart) {
     const count = String(row.quantity ?? 1);
-    const noun = howMany[1]!.toLowerCase().replace(/s$/, "");
-    if (/^(ticket|seat|night)$/.test(noun) && new RegExp(`\\b(a|an|one|two|three|four|five|six|\\d+)\\s+(?:\\w+\\s+){0,2}?${noun}s?\\b`, "i").test(words)) said.unfair(`it asks how many ${noun}s though the shopper already said: ${short(reply, 160)}`);
     if (!sent.has(count)) return choose(count);
-  }
-  // A choice written on one line: "Which size? Size: XS, S, M, L".
-  const inline = inlineChoice(reply);
-  if (inline) {
-    if (notListed(inline.name, inline.options.map(valueOf))) return null;
-    const value = fitting(inline);
-    if (value && !tried.has(value)) return give(value);
   }
   // "Want me to add it to your cart?", or the same product at the price the store now shows: yes, while no cart exists.
   // This is never the yes that pays, which is only asked for over a cart. A booking too: "Do you want me to add the King
   // Room?" holds the room with its price, and books nothing (2026-11-27, a hotel run ended on this question).
   // An offer at another store than the one the shopper named is never taken: the chat then ends with no card at the
   // named store, which is what happened.
-  if (!answer.cart && asks === "add_to_cart") {
-    const sentences = reply.split(/(?<=[.?!])\s+|\n+/);
-    const question = sentences.findIndex((sentence) => sentence.includes("?"));
-    // The store an offer is at is the last one the reply names up to the question: "The closest swap is the tee at
-    // Kohl's, $19.99. It has a mountain design. Want me to add it?" is an offer at Kohl's.
-    const upTo = question < 0 ? sentences : sentences.slice(0, question + 1);
-    const naming = [...upTo].reverse().find((sentence) => STORE_NAMED.test(sentence)) ?? upTo.join(" ");
-    return !elsewhere && atNamedStore(naming, row) ? "yes" : null;
-  }
+  if (!answer.cart && asks === "add_to_cart") return !elsewhere && atNamed(reading?.offerAt ?? null) ? "yes" : null;
   // "I couldn't get through the checkout. Want me to try it again?": a shopper says yes, once. A second failure ends the chat.
   if (!answer.cart && asks === "try_again" && !sent.has("yes, try again")) return "yes, try again";
-  // "Your message points to two different shoes. Which one do you want?": the shopper answers with the name of the card
-  // they picked, alone, which is never ambiguous.
-  const picked = said.picked();
-  if (picked && !answer.cart && /which (one|of)/i.test(reply) && reply.toLowerCase().includes(picked.name.toLowerCase().slice(0, 40)) && !sent.has(picked.name)) {
-    sent.add(picked.name);
-    return picked.name;
+  // "Which one do you want?" among products: the card the shopper picked, by its name alone, which is never ambiguous;
+  // else the first one at the store they named that fits their ask, by its number. From the answer's `products` field
+  // when it has one; whether a product fits the ask is its reading (a tee offered in another colour than asked does not).
+  const fitsTheAsk = (name: string) => reading?.products.find((product) => product.name.toLowerCase() === name.toLowerCase())?.fitsTheAsk !== false;
+  const offered = answer.products?.length ? answer.products.map((product, index) => ({ number: index + 1, name: product.name, store: product.store, fitsTheAsk: fitsTheAsk(product.name) })) : (reading?.products ?? []);
+  if (!answer.cart && !elsewhere && offered.length > 1 && (asks === "other_question" || asks === "product_option")) {
+    const picked = said.picked();
+    if (picked && offered.some((product) => product.name.toLowerCase().includes(picked.name.toLowerCase().slice(0, 40))) && !sent.has(picked.name)) {
+      sent.add(picked.name);
+      return picked.name;
+    }
+    const first = offered.find((product) => atNamed(product.store) && product.fitsTheAsk);
+    if (first?.number && !sent.has(`number ${first.number}`)) return `number ${first.number}`;
   }
-  // Two products told apart by number: the first one at the store the shopper named.
-  if (!answer.cart && !elsewhere && /which (one|of)/i.test(reply)) {
-    const numbered = [...reply.matchAll(/^\s*(\d+)[.)]\s+(.+)$/gm)].find((line) => atNamedStore(line[2]!, row));
-    if (numbered && !sent.has(`number ${numbered[1]}`)) return `number ${numbered[1]}`;
-  }
-  // A choice written out as a list under a question, such as a colour: the value the shopper already named, else the
-  // first value listed that was not tried yet, so a value the store then says is sold out is followed by the next one.
-  // A line that offers a product at another store is never taken.
-  const listed = elsewhere ? [] : [...reply.matchAll(/^\s*[•\-*]\s*(.+)$/gm)].map((found) => valueOf(found[1]!)).filter((value) => Boolean(value) && atNamedStore(value, row));
-  if (listed.length > 1 && /\?/.test(reply)) {
-    // Only a list of short values is a list of colours or sizes. A list of products with their prices never is.
-    const values = listed.every((value) => value.length <= 30 && !/\$\s?\d/.test(value));
-    if (values && notListed(reply.split(/\n/).find((line) => line.includes("?")) ?? "", listed)) return null;
-    options.splice(0, options.length, ...listed);
-  }
-  if (/\?/.test(reply) && (listed.length > 1 || /sold out|out of stock|unavailable|isn't available/i.test(reply))) {
-    const fits = (one: string) => (row.color ? showsColor(one, row.color) : false) || (row.size ? showsSize(one, row.size) : false) || saidValue(one, words);
-    const value = options.find((one) => !sent.has(one) && fits(one)) ?? options.find((one) => !sent.has(one));
-    return value ? choose(value) : null;
-  }
-  // "What size would you like?" with no sizes listed: a question about a choice the product has, which is fair and gets
+  // "What size would you like?" with no values listed: a question about a choice the product has, which is fair and gets
   // an answer, never the end of the chat. The shopper gives the size or the colour their ask named, else the one a person
   // with no preference would name.
-  const which = reply.match(/\b(?:what|which) (size|colou?r)\b[^?]*\?/i);
-  if (which) {
-    const value = /size/i.test(which[1]!) ? (row.size ?? "medium") : (row.color ?? "any colour you have in stock");
+  if (asks === "product_option" && groups.length === 0) {
+    const value = [row.size, row.color].filter(Boolean).join(", ") || "medium";
     if (!sent.has(value)) return choose(value);
   }
   return null;
@@ -591,7 +526,6 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     reasked: (line) => purchase.reasked.push(`after "${short(purchase.steps.at(-1)?.said ?? "", 60)}" ${line}`),
   };
   const sent = said.sent;
-  const saidSoFar = said.words;
 
   const chat: Chat<EveEvalTurn> = {
     open: (message) => t.send(message),
@@ -623,7 +557,9 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     const answer = lastAnswer(turn) as Answer | null;
     // Earlier totals and the picked card's price, which a reply may compare against.
     const earlier = [...new Set([...purchase.steps.map((one) => one.answer?.cart?.total).filter((total): total is string => Boolean(total)), ...(purchase.picked?.price ? [purchase.picked.price] : [])])];
-    const reading = answer && buyCalls(turn).length > 0 ? await readReply({ reply: answer.reply, cart: answer.cart, nextAction: answer.next_action, earlier }, (line) => t.log(line)) : null;
+    const shopper = [...purchase.steps.map((one) => one.said), message];
+    const choiceField = answer?.choice?.groups.map((group) => ({ name: group.name, options: group.options.map(valueOf) }));
+    const reading = answer && buyCalls(turn).length > 0 ? await readReply({ reply: answer.reply, cart: answer.cart, nextAction: answer.next_action, earlier, shopper, ...(choiceField?.length ? { choiceField } : {}) }, (line) => t.log(line)) : null;
     const step: Step = { said: message, turn, answer, snapshot: snapshotOf(turn), reading, ...(why ? { why } : {}) };
     purchase.steps.push(step);
     // The ask and the pick must not confirm. A refusal is reported once, as the reason the chat stopped or as the store's
@@ -650,11 +586,12 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     const values = new Set(said.contacts.flatMap((contact) => [contact.name, contact.bornOn, contact.email, contact.phone]));
     for (const value of values) if (message.includes(value)) said.gave.set(value, (said.gave.get(value) ?? 0) + 1);
     if (message.split(/,\s*/).includes(said.contacts[0]!.gender)) said.gave.set(said.contacts[0]!.gender, (said.gave.get(said.contacts[0]!.gender) ?? 0) + 1);
-    // Every choice an answer asks for is held against what the shopper has already said (lib/questions.ts).
-    const inline = inlineChoice(step.answer.reply);
-    const groups = step.answer.choice?.groups.length ? step.answer.choice.groups : inline ? [inline] : [];
-    // A reply that goes back to the shopper because what they asked for is not offered asks fairly, whatever it asks.
-    if (!offersThePagesOptions(step.answer.reply)) for (const line of unfairQuestions(groups, saidSoFar())) purchase.unfair.push(`after "${short(message, 60)}" ${line}`);
+    // Every question an answer asks is held against what the shopper has already said: choices with placeholders for
+    // names nobody can answer (lib/questions.ts), and questions about something the shopper already settled, as the
+    // reply's reading finds them. A question about something they asked for that cannot be had is fair.
+    const groups = step.answer.choice?.groups.length ? step.answer.choice.groups : (step.reading?.choices ?? []).map((choice) => ({ name: choice.name, required: true, options: choice.values }));
+    for (const line of placeholderNames(groups)) purchase.unfair.push(`after "${short(message, 60)}" ${line}`);
+    for (const asked of step.reading?.alreadySaid ?? []) purchase.unfair.push(`after "${short(message, 60)}" it asks ${short(asked, 120)}, which the shopper already said`);
     return { step, app: false };
   };
 
@@ -736,7 +673,7 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     if (cards.length > 0) purchase.cards = cards;
     // A booking whose search found nothing bookable in the dates asked says so in its code, which is read first.
     if (row.kind === "booking" && noRoomByCode(codeOf(step))) {
-      purchase.storeAnswer = storeAnswerOf({ code: codeOf(step), reply: step.answer?.reply ?? "", booking: true });
+      purchase.storeAnswer = storeAnswerOf({ code: codeOf(step), reply: step.answer?.reply ?? "", said: step.reading?.storeSays, booking: true });
       return purchase;
     }
     const pick = choose(cards);
@@ -750,7 +687,7 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     const noRoom = ofTheProduct.length > 0 ? storeAnswerOf({ code: null, reply: "", booking: row.kind === "booking", cards: ofTheProduct, free: row.free }) : null;
     const question = !noRoom && !row.cards && step.answer ? nextMessage(step.answer, step.reading, row, said) : null;
     if (!question) {
-      const own = noRoom ? { ...noRoom, said: short(step.answer?.reply ?? "", 300) } : storeAnswerOf({ code: codeOf(step), reply: step.answer?.reply ?? "", booking: row.kind === "booking", cards: ofTheProduct, free: row.free });
+      const own = noRoom ? { ...noRoom, said: short(step.answer?.reply ?? "", 300) } : storeAnswerOf({ code: codeOf(step), reply: step.answer?.reply ?? "", said: step.reading?.storeSays, booking: row.kind === "booking", cards: ofTheProduct, free: row.free });
       if (own) {
         purchase.storeAnswer = own;
         return purchase;
@@ -803,10 +740,11 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
       return purchase;
     }
     if (row.kind === "booking" && noRoomByCode(code)) {
-      purchase.storeAnswer = storeAnswerOf({ code, reply: answer.reply, booking: true });
+      purchase.storeAnswer = storeAnswerOf({ code, reply: answer.reply, said: step.reading?.storeSays, booking: true });
       return purchase;
     }
-    const own = () => storeAnswerOf({ code, reply: answer.reply, booking: row.kind === "booking", priceChanged: Boolean(answer.cart?.price_change) && answer.status === "declined" });
+    const storeSays = step.reading?.storeSays;
+    const own = () => storeAnswerOf({ code, reply: answer.reply, said: storeSays, booking: row.kind === "booking", priceChanged: Boolean(answer.cart?.price_change) && answer.status === "declined" });
     if (["declined", "needs_card", "approval_sent", "placing", "order_placed"].includes(answer.status)) {
       purchase.storeAnswer = answer.status === "declined" ? own() : null;
       if (!purchase.storeAnswer) purchase.stopped = `Agentcard stopped with "${answer.status}"${code ? ` (${code})` : ""} before ${goal === "cart" ? "a cart existed" : "the purchase was ready to pay"}: ${short(answer.reply)}`;

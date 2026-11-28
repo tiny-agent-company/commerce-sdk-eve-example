@@ -40,6 +40,8 @@ export interface AnswerFacts {
   /** The code the purchase stopped with, or the error's code, as the app reads it. */
   code: string | null;
   reply: string;
+  /** What the reply says the store answered, as its reading by a model has it (lib/reply-reader.ts), when there is one. */
+  said?: "out_of_stock" | "price_differs" | "no_availability" | null;
   /** True for a flight, a room, a car, a table, a class, a ticket or an event: what runs out there is seats, not stock. */
   booking: boolean;
   /** True when the cart says the store charges another price than the card showed. */
@@ -61,9 +63,6 @@ const SOLD_OUT_CODE = /(^|_)(sold_out|out_of_stock)($|_)|^items_unavailable$/;
 const PRICE_CODE = /(^|_)price_(changed|change|mismatch|differs|rose|above_listed)($|_)|^max_price_exceeded$/;
 const NO_ROOM_CODE = /^(no_availability|not_available|no_seats|no_listings|no_rooms|no_tables|fully_booked|sold_out|slot_unavailable|time_unavailable)$/;
 
-const SOLD_OUT_WORDS = /\b(out of stock|out-of-stock|sold out|not in stock|isn't in stock|is not in stock|no longer in stock|none left in stock)\b|\b(no longer|doesn't|does not|didn't|did not) (has|have|carry|carries|stock|stocks)\b[^.?!]{0,100}\bin stock\b/i;
-const PRICE_WORDS = /\bprice (has |had )?(changed|went up|gone up|rose|risen|increased|dropped|is different|differs)\b|\b(costs?|charges?|priced?( it| the \w+)?|price (is|was|of)|lists? it)\b(?:[^.?!]|\.\d){0,90}\b(more than|higher than|above|instead of|rather than|not the|different from|and not)\b|\b(now|actually) \$\d/i;
-const NO_ROOM_WORDS = /\bno (seats?|tickets?|listings?|tables?|rooms?|availability|flights?|classes|cars?|spots?|openings?|times?|slots?|pairs? of (seats|tickets))\b|\bnothing (\w+ )?to book\b|\bnone (of them )?(has|have|is|are)\b[^.?!]{0,60}\bavailable\b|\b(fully|all) booked\b|\bsold out\b|\bnothing (is )?(available|open|left)\b|\bno \w+( \w+)? (is|are) available\b/i;
 
 /**
  * The store's own answer an answer gives, or null when it gives none. Read at the point a chat cannot go on: a stop
@@ -84,9 +83,10 @@ export function storeAnswerOf(facts: AnswerFacts): StoreAnswer | null {
   const cards = facts.cards ?? [];
   if (facts.booking && cards.length > 0 && cards.every((card) => card.availability === "unavailable" || (!facts.free && card.price === null))) return fromFields("no seats or availability");
 
-  if (facts.booking && NO_ROOM_WORDS.test(facts.reply)) return fromWords("no seats or availability");
-  if (!facts.booking && SOLD_OUT_WORDS.test(facts.reply)) return fromWords("out of stock");
-  if (PRICE_WORDS.test(facts.reply) && /\$\s?\d/.test(facts.reply)) return fromWords("the store's price differs from the card's");
+  // With no field for it, the reply's reading by a model says what the store answered, never a list of words.
+  if (facts.booking && facts.said === "no_availability") return fromWords("no seats or availability");
+  if (!facts.booking && facts.said === "out_of_stock") return fromWords("out of stock");
+  if (facts.said === "price_differs") return fromWords("the store's price differs from the card's");
   return null;
 }
 

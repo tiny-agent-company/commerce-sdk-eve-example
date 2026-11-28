@@ -1,5 +1,5 @@
 import { defineEval } from "eve/evals";
-import { modelReader, type Ask, type CartFields, type Reading } from "../lib/reply-reader.ts";
+import { findSaying, modelReader, type Ask, type CartFields, type Detail, type Reading } from "../lib/reply-reader.ts";
 
 /**
  * Checks the reply reader itself (lib/reply-reader.ts). Each case hands it a reply Agentcard really gave in an eval
@@ -16,11 +16,28 @@ interface Case {
   reply: string;
   cart: CartFields | null;
   earlier?: string[];
-  asks: Ask;
+  /** What the reply asks, or the readings that are each right for a reply that asks two things at once. */
+  asks: Ask | Ask[];
   pricing?: Reading["pricing"];
   stillWorking?: boolean;
   quotesTheCharge?: boolean;
   wrong: boolean;
+  /** What the shopper typed before, in order, when it matters to the reading. */
+  shopper?: string[];
+  choiceField?: { name: string; options: string[] }[];
+  details?: Detail[];
+  /** The detail the reply says was refused, and whether it says why. */
+  refused?: { detail: Detail; reasonGiven: boolean };
+  /** For each named choice, the value that fits the shopper's ask, or null when none can. */
+  fits?: Record<string, string | null>;
+  /** True when the reply asks about something the shopper already settled. */
+  alreadySaid?: boolean;
+  offerAt?: string | null;
+  storeSays?: Reading["storeSays"];
+  /** How many products the reply asks the shopper to choose among. */
+  products?: number;
+  /** False when every product the reply offers misses the shopper's ask. */
+  productsFit?: boolean;
 }
 
 const cases: Case[] = [
@@ -142,20 +159,208 @@ const cases: Case[] = [
     stillWorking: true,
     wrong: false,
   },
+  {
+    name: "a guest checkout's contact details",
+    reply: "Ace Hardware needs your email, full name and phone number for guest checkout. What should I use?",
+    cart: null,
+    asks: "contact_details",
+    details: ["email", "name", "phone"],
+    wrong: false,
+  },
+  {
+    name: "details the reply only thanks the shopper for are not asked",
+    reply: "I have the name (Jane Doe) and phone number. What's the delivery address?",
+    cart: null,
+    shopper: ["a Stanley hammer from Ace Hardware", "Jane Doe, 415-555-0137"],
+    asks: "address",
+    details: [],
+    wrong: false,
+  },
+  {
+    name: "a refused email with its reason",
+    reply: "The restaurant couldn't take jane.doe@example.com: it's a reserved example address, not one that can receive the confirmation. What email should I use for the table?",
+    cart: null,
+    shopper: ["a table for two at an Italian restaurant in San Francisco", "I want number 1", "Jane Doe, jane.doe@example.com, 415-555-0137"],
+    asks: "contact_details",
+    details: ["email"],
+    refused: { detail: "email", reasonGiven: true },
+    wrong: false,
+  },
+  {
+    name: "a phone asked for again with no reason",
+    reply: "What phone number should go on the booking?",
+    cart: null,
+    shopper: ["a table for two at an Italian restaurant in San Francisco", "I want number 1", "Jane Doe, evals@agentcard.sh, +61 491 570 006"],
+    asks: "contact_details",
+    details: ["phone"],
+    refused: { detail: "phone", reasonGiven: false },
+    wrong: false,
+  },
+  {
+    name: "the size asked for is sold out, and asking again is fair",
+    reply: "This shirt comes in black in S, L and XL. M is sold out. Which one, or should I look for another shirt?",
+    cart: null,
+    shopper: ["a black cotton crewneck t-shirt for men in size medium from Gap", "I want number 1: Crew-Neck T-Shirt, $5.99"],
+    asks: "product_option",
+    fits: { Size: null },
+    alreadySaid: false,
+    wrong: false,
+  },
+  {
+    name: "the colour asked for, in the store's own words",
+    reply: "Which colour do you want?",
+    cart: null,
+    choiceField: [{ name: "Color", options: ["Navy", "Jet Black", "White"] }],
+    shopper: ["a black cotton crewneck t-shirt for men in size medium from Gap", "I want number 2"],
+    asks: "product_option",
+    fits: { Color: "Jet Black" },
+    wrong: false,
+  },
+  {
+    name: "a choice the shopper said nothing about takes the first value",
+    reply: "Which filling do you want for the Crunchy Taco?",
+    cart: null,
+    choiceField: [{ name: "Filling", options: ["Seasoned Beef", "Chicken"] }],
+    shopper: ["one Crunchy Taco from Taco Bell on DoorDash", "I want number 1"],
+    asks: "product_option",
+    fits: { Filling: "Seasoned Beef" },
+    alreadySaid: false,
+    wrong: false,
+  },
+  {
+    name: "a size the shopper already named is asked again",
+    reply: "Which size do you want? Size: S, M, L, XL",
+    cart: null,
+    shopper: ["a black cotton crewneck t-shirt for men in size medium from Gap", "I want number 1"],
+    asks: "product_option",
+    alreadySaid: true,
+    wrong: false,
+  },
+  {
+    name: "restating the shopper's choice before the next question is not asking again",
+    reply: "The 68\" Jade Harmony Yoga Mat from JadeYoga is $99.95. Which color do you want?\n• Purple\n• Black\n• Teal",
+    cart: null,
+    shopper: ["a Jade Harmony yoga mat from jadeyoga.com", "I want number 1: Jade Harmony Yoga Mat - JadeYoga, $99.95", "68\" Length"],
+    asks: "product_option",
+    alreadySaid: false,
+    wrong: false,
+  },
+  {
+    name: "asking to confirm the shopper's own choice is not asking again",
+    reply: "Do you want Corzetti at 7:00 PM for two on Friday, Dec 4?",
+    cart: null,
+    shopper: ["a table for two at an Italian restaurant in San Francisco on Friday, December 4 at 7pm", "I want number 5: Corzetti", "7:00 PM"],
+    asks: ["add_to_cart", "pay_or_book", "other_question"],
+    alreadySaid: false,
+    wrong: false,
+  },
+  {
+    name: "how many tickets, after the shopper said two",
+    reply: "How many tickets do you need?",
+    cart: null,
+    shopper: ["two tickets to a New York Knicks home game in January", "I want number 3"],
+    asks: "how_many",
+    alreadySaid: true,
+    wrong: false,
+  },
+  {
+    name: "which of several products, with their stores",
+    reply: "I found two listings of the ribbed tee.\n\n1. Ribbed Stretch-cotton Crew-neck T-shirt, $44.99 at Bananarepublic\n2. Ribbed Stretch-Cotton Crew-Neck T-Shirt, $44.99 at Gap\n\nWhich one do you want?",
+    cart: null,
+    asks: "other_question",
+    products: 2,
+    wrong: false,
+  },
+  {
+    name: "a product offered in another colour than asked does not fit the ask",
+    reply: "I couldn't add the Crew-Neck T-Shirt to your cart. It has no medium in stock. Want me to look for a black medium tee at another store? Or you could take the Adult Heavyweight Relaxed T-shirt at Gap, $35.00, in Dark night, the closest color it comes in.",
+    cart: null,
+    shopper: ["a black cotton crewneck t-shirt for men in size medium from Gap", "I want number 1: Gap Adult Heavyweight Relaxed T-shirt, $35.00", "yes"],
+    asks: ["other_question", "add_to_cart"],
+    productsFit: false,
+    wrong: false,
+  },
+  {
+    name: "an offer to add names the store it is at",
+    reply: "The closest swap is the Mountain Tee at Kohl's, $19.99. It has a mountain design. Want me to add it?",
+    cart: null,
+    asks: "add_to_cart",
+    offerAt: "Kohl's",
+    wrong: false,
+  },
+  {
+    name: "a product no longer in stock",
+    reply: "Amazon no longer has the 8-count Amazon Basics AA batteries in stock, so I couldn't add them. Your cart is empty.",
+    cart: null,
+    asks: "nothing",
+    storeSays: "out_of_stock",
+    wrong: false,
+  },
+  {
+    name: "nothing to book for two",
+    reply: "I checked all eight Knicks home games in January and there's nothing to book for two right now: no pairs of tickets are listed.",
+    cart: null,
+    asks: "nothing",
+    storeSays: "no_availability",
+    wrong: false,
+  },
+  {
+    name: "a checkout that failed is not the store's own answer",
+    reply: "I couldn't get through Uniqlo's checkout this time. Nothing was ordered or charged.",
+    cart: null,
+    asks: "nothing",
+    storeSays: null,
+    wrong: false,
+  },
+  {
+    name: "as listed or changed",
+    reply: "Do you want it as listed: True black, M, or changed?",
+    cart: null,
+    shopper: ["a black cotton crewneck t-shirt for men in size medium from Gap", "I want number 1"],
+    asks: "as_listed",
+    wrong: false,
+  },
 ];
 
-export default cases.map((one) =>
+export default [
+  defineEval({
+    description: "reply reader: a question about a size is not asking whether to add",
+    tags: ["judge"],
+    async test(t) {
+      const replies = ["Which size should I add for the Jade Harmony Yoga Mat? 68\" Length, 74\" Length", "Want me to add the Hydro Flask Standard Mouth bottle to your cart?", "Added it. What's the delivery address?"];
+      const found = await findSaying(replies, "asks the shopper whether to add, get or buy the product (\"Want me to add it?\"), as opposed to asking which size, colour or other option of it they want");
+      t.score({ score: JSON.stringify(found) === JSON.stringify([1]) ? 1 : 0, message: `expected [1], read ${JSON.stringify(found)}` }).label("finds-what-a-reply-says").gate(1);
+    },
+  }),
+  ...cases.map((one) =>
   defineEval({
     description: `reply reader: ${one.name}`,
     tags: ["judge"],
     async test(t) {
-      const reading = await modelReader({ reply: one.reply, cart: one.cart, nextAction: null, earlier: one.earlier ?? [] });
+      const reading = await modelReader({ reply: one.reply, cart: one.cart, nextAction: null, earlier: one.earlier ?? [], shopper: one.shopper ?? [], ...(one.choiceField ? { choiceField: one.choiceField } : {}) });
       const score = (label: string, right: boolean, message: string) => t.score({ score: right ? 1 : 0, message }).label(label).gate(1);
-      score("reads-what-it-asks", reading.asks === one.asks, `expected ${one.asks}, read ${reading.asks}`);
+      const asks = Array.isArray(one.asks) ? one.asks : [one.asks];
+      score("reads-what-it-asks", asks.includes(reading.asks), `expected ${asks.join(" or ")}, read ${reading.asks}`);
       score("reads-wrong-amounts", reading.wrongAmounts.length > 0 === one.wrong, `expected ${one.wrong ? "a wrong amount" : "no wrong amount"}, read: ${reading.wrongAmounts.map((amount) => `${amount.amount} (${amount.why})`).join("; ") || "none"}`);
       if (one.pricing !== undefined) score("reads-pricing", reading.pricing === one.pricing, `expected ${one.pricing}, read ${reading.pricing}`);
       if (one.stillWorking !== undefined) score("reads-still-working", reading.stillWorking === one.stillWorking, `expected ${one.stillWorking}, read ${reading.stillWorking}`);
       if (one.quotesTheCharge !== undefined) score("reads-the-charge", reading.quotesTheCharge === one.quotesTheCharge, `expected ${one.quotesTheCharge}, read ${reading.quotesTheCharge}`);
+      if (one.details) score("reads-the-details", [...reading.details].sort().join() === [...one.details].sort().join(), `expected ${one.details.join(", ") || "none"}, read ${reading.details.join(", ") || "none"}`);
+      if (one.refused) {
+        const found = reading.refused.find((r) => r.detail === one.refused!.detail);
+        score("reads-a-refused-detail", found !== undefined && found.reasonGiven === one.refused.reasonGiven, `expected ${one.refused.detail} refused ${one.refused.reasonGiven ? "with" : "without"} a reason, read ${JSON.stringify(reading.refused)}`);
+      }
+      if (one.fits)
+        for (const [choice, value] of Object.entries(one.fits)) {
+          const fit = reading.fits.find((f) => f.choice.toLowerCase().includes(choice.toLowerCase()));
+          score("reads-the-value-that-fits", fit !== undefined && (fit.value ?? null) === value, `expected ${choice}: ${value}, read ${JSON.stringify(reading.fits)}`);
+        }
+      if (one.alreadySaid !== undefined) score("reads-a-question-already-answered", reading.alreadySaid.length > 0 === one.alreadySaid, `expected ${one.alreadySaid ? "a question already answered" : "none"}, read ${JSON.stringify(reading.alreadySaid)}`);
+      if (one.offerAt !== undefined) score("reads-where-an-offer-is", (reading.offerAt ?? "").toLowerCase().includes((one.offerAt ?? "").toLowerCase().slice(0, 4)) && (one.offerAt === null) === (reading.offerAt === null), `expected ${one.offerAt}, read ${reading.offerAt}`);
+      if (one.storeSays !== undefined) score("reads-the-stores-answer", reading.storeSays === one.storeSays, `expected ${one.storeSays}, read ${reading.storeSays}`);
+      if (one.productsFit !== undefined) score("reads-whether-products-fit", reading.products.some((product) => product.fitsTheAsk) === one.productsFit, `expected ${one.productsFit ? "a product that fits" : "no product that fits"}, read ${JSON.stringify(reading.products)}`);
+      if (one.products !== undefined) score("reads-the-products-offered", reading.products.length === one.products, `expected ${one.products}, read ${reading.products.length}`);
     },
   }),
-);
+  ),
+];
