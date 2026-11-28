@@ -3,7 +3,7 @@ import { satisfies } from "eve/evals/expect";
 import { chatAgainOnce } from "../lib/connection.ts";
 import { limitFor, oneAfterAnother } from "../lib/one-after-another.ts";
 import { cartStep, checkChat, checkReached, endedElsewhere, logPath, sandboxCredentials, shop, SHOPPER, type Purchase } from "../lib/purchase.js";
-import { asksWhetherToAdd, type Group } from "../lib/questions.ts";
+import { findSaying } from "../lib/reply-reader.ts";
 import { SUPPLIERS, type StoreCase } from "../lib/stores.js";
 
 /**
@@ -27,8 +27,11 @@ interface AskedOnceCase {
   /** What used to happen, in the eval's name. */
   name: string;
   row: StoreCase;
-  /** What no reply may say, and the check's message when one does: words, or a rule that also reads the choice the answer asks for. */
-  never: RegExp | ((reply: string, groups: readonly Group[]) => boolean);
+  /**
+   * What no reply may do, in plain words, to finish "a reply that…". A model reads each reply for it (lib/reply-reader.ts),
+   * never a list of words: on 2026-11-26 "Which size should I add?" was read by words as asking whether to add.
+   */
+  never: string;
   neverMeans: string;
   /** Which replies are read: all of them, or only those after the shopper picked a card. Before a pick, "Want me to add it?" can be a fair question. */
   read?: "after the pick";
@@ -44,8 +47,7 @@ interface AskedOnceCase {
 }
 
 /** "Want me to add it?" to a shopper who already said what they want. Never a question about a size or a colour the product has. */
-const ASKS_AGAIN = asksWhetherToAdd;
-const COULD_NOT_ADD = /couldn't add|could not add|can't add|cannot add|haven't added/i;
+const ASKS_AGAIN = "asks the shopper whether to add, get or buy the product (\"Want me to add it?\"), as opposed to asking which size, colour or other option of it they want";
 
 const jadeYoga: StoreCase = { store: "jadeyoga.com", supplier: "shopify", kind: "goods", ask: "a Jade Harmony yoga mat from jadeyoga.com", at: /jade/i, product: /harmony/i, maxPrice: 130 };
 
@@ -68,20 +70,20 @@ const cases: AskedOnceCase[] = [
     name: "an answer sent with the product's price still carts the product",
     // An app built on the Commerce SDK answers a store's question by sending the card's line again, price included.
     row: { ...jadeYoga, choiceAs: (value, picked) => `Add ${picked?.name ?? "the Jade Harmony Yoga Mat"}${picked?.price ? `, ${picked.price}` : ""} from JadeYoga to my cart, ${value}` },
-    never: COULD_NOT_ADD,
+    never: "says the product could not be added to the cart",
     neverMeans: "a price in the shopper's answer is not a new quantity, so no reply says the product could not be added",
     read: "after the pick",
   },
   {
     name: "a colour the store lists is carted, whatever else the request says",
     row: { store: "brooklinen.com", supplier: "shopify", kind: "goods", ask: "a set of 2 white Super-Plush Turkish Cotton Bath Towels from brooklinen.com", at: /brooklinen/i, product: /towel/i, maxPrice: 160 },
-    never: /couldn't add it in white|could not add it in white|default title/i,
+    never: "says the product could not be added in White, or names a placeholder option such as \"Default Title\"",
     neverMeans: "White is a colour the store lists, so no reply says it could not be added in White or names the store's placeholder option",
   },
   {
     name: "a Shopify store listed without www is searched and bought at its own site",
     row: { store: "grivetoutdoors.com", supplier: "shopify", kind: "goods", ask: "a Dickies striped long sleeve cropped t-shirt for women from grivetoutdoors.com", at: /grivet/i, product: /striped/i, maxPrice: 60 },
-    never: /failed before payment|did not reach the store/i,
+    never: "says the checkout failed before payment, or did not reach the store",
     neverMeans: "the store's own site sells the product, so no reply says the checkout failed before payment",
     optionsBeforeAddress: true,
   },
@@ -90,14 +92,14 @@ const cases: AskedOnceCase[] = [
     // The card may come from either supplier: on 2026-11-27 the only card shown opened Best Buy's own page, and the case
     // is about the card's link and its title, whoever lists it.
     row: { store: "Best Buy", supplier: "catalog", kind: "goods", ask: "a StarTech 6 ft flat high speed HDMI cable from Best Buy", at: /best ?buy/i, product: /hdmi/i, maxPrice: 60 },
-    never: /another product|a different product/i,
+    never: "says the card's link opened another product than the card",
     neverMeans: "the card's link opens that product, so no reply says it opened another product",
   },
   {
     name: "a card at a store in Canada is carted",
     // The CN Tower: a public landmark, never a person's address.
     row: { store: "canadiantire.ca", supplier: "catalog", kind: "goods", ask: "a 16 pack of Duracell Coppertop AA batteries from canadiantire.ca", at: /canadian ?tire/i, product: /duracell/i, maxPrice: 45, address: "290 Bremner Blvd, Toronto, ON M5V 3L9, Canada" },
-    never: /no offer|isn't available to order there|not available to order there/i,
+    never: "says the catalog has no offer for the product there, or that it is not available to order there",
     neverMeans: "the store sells the product in Canada, so no reply says the catalog has no offer there",
     until: "the checkout starts",
   },
@@ -105,17 +107,17 @@ const cases: AskedOnceCase[] = [
     name: "a store named in this message is where the product is bought, whatever store an earlier message named",
     messages: ["show me notebooks at muji.us"],
     row: { store: "hydroflask.com", supplier: "catalog", kind: "goods", ask: "a Hydro Flask Standard Mouth stainless steel water bottle from hydroflask.com, add it to my cart", at: /hydro ?flask/i, product: /bottle/i, maxPrice: 60 },
-    never: /muji/i,
+    never: "holds the purchase to Muji, or offers or searches Muji, the store the shopper looked at before",
     neverMeans: "the shopper asked at hydroflask.com now, so no reply holds the purchase to the store they looked at before",
     read: "after the pick",
   },
 ];
 
 /** Every reply of the chat the case reads, Agentcard's and the agent's own, each with the message it answered and the choice the answer asked for. */
-function repliesRead(purchase: Purchase, read: AskedOnceCase["read"]): { said: string; reply: string; groups: readonly Group[] }[] {
+function repliesRead(purchase: Purchase, read: AskedOnceCase["read"]): { said: string; reply: string }[] {
   const picked = purchase.picked ? purchase.steps.findIndex((step) => step.said.includes(purchase.picked!.name)) : -1;
   const steps = read === "after the pick" ? purchase.steps.slice(Math.max(picked, 0)) : purchase.steps;
-  return steps.flatMap((step) => [step.answer?.reply ?? "", step.turn.reply ?? ""].filter(Boolean).map((reply) => ({ said: step.said, reply, groups: step.answer?.choice?.groups ?? [] })));
+  return steps.flatMap((step) => [step.answer?.reply ?? "", step.turn.reply ?? ""].filter(Boolean).map((reply) => ({ said: step.said, reply })));
 }
 
 /** How long one run of these evals may take: a store's own checkout can take a few minutes to price a cart, and a late result a few more to arrive. */
@@ -142,8 +144,8 @@ export default cases.map((one) => {
       t.succeeded();
       checkChat(t, one.row, purchase);
 
-      const says = (reply: string, groups: readonly Group[]) => (one.never instanceof RegExp ? one.never.test(reply) : one.never(reply, groups));
-      const broke = repliesRead(purchase, one.read).find(({ reply, groups }) => says(reply, groups));
+      const replies = repliesRead(purchase, one.read);
+      const broke = replies[(await findSaying(replies.map(({ reply }) => reply), one.never))[0] ?? -1];
       t.check(
         broke ?? null,
         satisfies((found: typeof broke | null) => found === null, `${one.neverMeans}${broke ? ` (after "${broke.said.slice(0, 80)}" it said: ${broke.reply.replace(/https?:\/\/\S+/g, "(a link)").replace(/\s+/g, " ").slice(0, 240)})` : ""}`),

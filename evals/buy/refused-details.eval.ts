@@ -2,7 +2,7 @@ import { defineEval } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
 import { chatAgainOnce } from "../lib/connection.ts";
 import { limitFor, oneAfterAnother } from "../lib/one-after-another.ts";
-import { ASKS_PHONE, checkChat, GIVES_A_REASON, sandboxCredentials, shop, SHOPPER } from "../lib/purchase.js";
+import { checkChat, sandboxCredentials, shop, SHOPPER } from "../lib/purchase.js";
 import { STORES, SUPPLIERS } from "../lib/stores.js";
 
 /**
@@ -48,7 +48,8 @@ export default defineEval({
       const refused = after.some((step) => (step.answer!.cart?.details_needed ?? []).some((detail) => detail === "email" || detail === "phone") || step.answer!.next_action === "guest_details");
       if (!refused) t.log("the supplier took the placeholder email and phone this time, so there was no refusal to word");
       else {
-        const told = after.find((step) => (/e-?mail/i.test(step.answer!.reply) || ASKS_PHONE.test(step.answer!.reply)) && GIVES_A_REASON.test(step.answer!.reply));
+        // Which detail a reply says was refused, and whether it says why, is the reply's reading (lib/reply-reader.ts).
+        const told = after.find((step) => (step.reading?.refused ?? []).some((one) => (one.detail === "email" || one.detail === "phone") && one.reasonGiven));
         const said = after.map((step) => step.answer!.reply.replace(/\s+/g, " ").slice(0, 200)).join(" / ");
         t.check(told ?? null, satisfies((step: unknown) => step !== null, `the shopper is told which detail was refused, the email or the phone, and why (after the details, Agentcard said: ${said})`)).label("told-which-detail-was-refused");
       }
