@@ -19,7 +19,7 @@
     "eval:purchases": "eve eval --tag cart --tag checkout --tag asked-once --tag refused-details --repeat 3 --max-concurrency 6; EVAL_SHOPPER_ID=evals-store-accounts eve eval --tag store-account --repeat 3 --max-concurrency 6"
   },
   "dependencies": {
-    "@agent-cards/commerce-sdk": "^0.33.1",
+    "@agent-cards/commerce-sdk": "^0.35.0",
     "@vercel/connect": "2.5.2",
     "agnostai": "^0.2.2",
     "ai": "^7.0.137",

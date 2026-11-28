@@ -13,6 +13,23 @@ const agentcard = new AgentcardClient({
 /** One buy tool per shopper and chat, kept so each chat holds its own cart. */
 const shoppers = new Map<string, ReturnType<typeof buyTool>>();
 
+/**
+ * The shopper of a chat. The signed-in user is the shopper. Without auth, each session is its own shopper. Local
+ * development and the evals sign every session in as the same stand-in user, who is nobody: there too each session is its
+ * own shopper, so two chats never share a cart. The one exception is an eval run that signs in to a store with a test
+ * account: it sets EVAL_SHOPPER_ID, and every local session is then that one test shopper, who has the account saved with
+ * Agentcard (evals/lib/store-accounts.ts). It is never a real person, and a signed-in user is never replaced by it.
+ */
+export function shopperOf(user: { principalType: string; principalId: string } | null | undefined, sessionId: string): string {
+  return user && user.principalType !== "local-dev" ? user.principalId : process.env.EVAL_SHOPPER_ID || `session:${sessionId}`;
+}
+
+/** The key of a chat's buy tool: its shopper and its session. The tool and the open-purchase instruction build it the same way. */
+export const shopperKey = (user: { principalType: string; principalId: string } | null | undefined, sessionId: string) => `${shopperOf(user, sessionId)}:${sessionId}`;
+
+/** True while this chat's purchase is open with Agentcard (`buy.purchaseOpen`). False before the chat's first buy call. */
+export const purchaseOpenFor = (key: string) => shoppers.get(key)?.purchaseOpen === true;
+
 /** The answer the model read, which holds no link, as the record Agnost keeps of it. */
 function forAgnost(text: string, confirm: boolean): BuyRecord {
   try {
@@ -39,15 +56,9 @@ export default defineTool({
   inputSchema: buyToolDefinition().input_schema,
   label: { start: ({ ask }) => `Buy: ${ask}` },
   async *execute(input, ctx) {
-    // The signed-in user is the shopper. Without auth, each session is its own shopper. Local development and the evals
-    // sign every session in as the same stand-in user, who is nobody: there too each session is its own shopper, so two
-    // chats never share a cart. The one exception is an eval run that signs in to a store with a test account: it sets
-    // EVAL_SHOPPER_ID, and every local session is then that one test shopper, who has the account saved with Agentcard
-    // (evals/lib/store-accounts.ts). It is never a real person, and a signed-in user is never replaced by it.
     const user = ctx.session.auth.current;
-    const local = process.env.EVAL_SHOPPER_ID || `session:${ctx.session.id}`;
-    const externalUserId = user && user.principalType !== "local-dev" ? user.principalId : local;
-    const key = `${externalUserId}:${ctx.session.id}`;
+    const externalUserId = shopperOf(user, ctx.session.id);
+    const key = shopperKey(user, ctx.session.id);
     let buy = shoppers.get(key);
     if (!buy) {
       buy = buyTool({ agentcard, externalUserId, threadId: ctx.session.id });
