@@ -17,11 +17,10 @@
  * Only the store's name goes here, matched against the store an eval names. Never an email, a password or a code: this
  * repository is public. The accounts themselves are kept outside it.
  */
-// None yet. A test account exists at McMaster-Carr (2026-11-27), but Agentcard's store sign-in page could not read
-// McMaster-Carr's sign-in form and offered only the live view of the store's page, where nothing typed is kept, so the
-// account could not be saved. Target, Sephora, eBay and TikTok Shop have no test account yet. Add a store here once its
-// account is saved on the page for ACCOUNT_SHOPPER.
-const TEST_ACCOUNTS: RegExp[] = [];
+// Saved on Agentcard's store sign-in page for ACCOUNT_SHOPPER on 2026-11-28: McMaster-Carr (its sign-in form is read
+// since #18082) and Target (Target signs in with a code it emails, which the page took). Sephora, eBay, TikTok Shop and
+// Gap have no test account yet. Add a store here once its account is saved on the page for ACCOUNT_SHOPPER.
+const TEST_ACCOUNTS: RegExp[] = [/mcmaster/i, /target/i];
 
 /** The test shopper the store accounts are saved for. A run is this shopper when it starts with EVAL_SHOPPER_ID set to it. */
 export const ACCOUNT_SHOPPER = "evals-store-accounts";

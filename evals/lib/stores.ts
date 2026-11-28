@@ -129,14 +129,15 @@ const ownCheckout = (store: string, at: RegExp, ask: string, product: RegExp, ma
 const fromCatalog = (row: StoreCase): StoreCase => ({ ...row, supplier: "catalog", cards: "catalog" });
 
 const amazon = retailer("Amazon", /amazon/i, "an 8-pack of Amazon Basics AA batteries from Amazon", /\bAA\b/i);
-const target = retailer("Target", /target/i, "a box of Crayola 24 count crayons from Target", /crayon/i);
+// Target asks for its sign-in before a cart through its own checkout (2026-11-27). The evals have a test account there.
+const target: StoreCase = { ...retailer("Target", /target/i, "a box of Crayola 24 count crayons from Target", /crayon/i), needsAccount: true };
 const gap: StoreCase = { ...retailer("Gap", /gap/i, "a black cotton crewneck t-shirt for men in size medium from Gap", /t-?shirt|tee/i), size: "medium", color: "black" };
 const uniqlo: StoreCase = { ...retailer("Uniqlo", /uniqlo/i, "a white AIRism cotton crew neck t-shirt for men in size medium from Uniqlo", /airism/i), size: "medium", color: "white" };
 const ace = retailer("Ace Hardware", /ace/i, "a Stanley 16 ounce claw hammer from Ace Hardware", /hammer/i);
 const ebay = retailer("eBay", /ebay/i, "a new stainless steel water bottle on eBay, Buy It Now", /bottle/i);
 // TikTok Shop's "Add to cart" leads to its sign-in (2026-11-27).
 const tiktok: StoreCase = { ...retailer("TikTok Shop", /tiktok/i, "a stainless steel water bottle from TikTok Shop", /bottle|tumbler/i), needsAccount: true };
-// McMaster-Carr asks for its sign-in before a cart through its own checkout (2026-11-27).
+// McMaster-Carr asks for its sign-in before a cart through its own checkout (2026-11-27). The evals have a test account there.
 const mcmaster: StoreCase = { ...retailer("McMaster-Carr", /mcmaster/i, "a pack of M6 stainless steel socket head screws from McMaster-Carr", /screw/i), needsAccount: true };
 
 const retailers: StoreCase[] = [
@@ -247,7 +248,7 @@ const tee = (store: string, at: RegExp, color: string, supplier: Supplier = "ret
 const clothing: StoreCase[] = [
   { ...tee("Amazon", /amazon/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Amazon" },
   { ...tee("Walmart", /walmart/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Walmart" },
-  { ...tee("Target", /target/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Target" },
+  { ...tee("Target", /target/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Target", needsAccount: true },
   { ...tee("Macy's", /macy/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Macy's" },
   { ...tee("Kohl's", /kohl/i, "black", "catalog"), ask: "a black cotton crew neck t-shirt for men in size medium from Kohl's" },
   { ...tee("eBay", /ebay/i, "black"), ask: "a new black cotton crew neck t-shirt for men in size medium on eBay, Buy It Now" },
