@@ -94,3 +94,10 @@ test("an item no longer available while pricing is the store's own answer only w
   assert.equal(storeAnswerOf({ code: null, reply, said: "no_longer_available", offersNextStep: true, booking: false })?.what, "the item is no longer available");
   assert.equal(storeAnswerOf({ code: null, reply: "The item is no longer available.", said: "no_longer_available", offersNextStep: false, booking: false }), null);
 });
+
+test("Agentcard's own reading of a store page is never the store saying the item is no longer available", () => {
+  const reply = "McMaster-Carr no longer shows 18-8 Stainless Steel Socket Head Screw on its page, so I stopped before adding anything in its place. Nothing was ordered or charged. Want me to look for it at another store?";
+  assert.equal(storeAnswerOf({ code: "product_not_found", reply, said: "no_longer_available", offersNextStep: true, booking: false }), null);
+  assert.equal(storeAnswerOf({ code: "off_product_page", reply, said: "no_longer_available", offersNextStep: true, booking: false }), null);
+  assert.equal(storeAnswerOf({ code: null, reply, said: "no_longer_available", offersNextStep: true, booking: false })?.what, "the item is no longer available");
+});

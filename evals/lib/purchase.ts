@@ -764,7 +764,9 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
       purchase.storeAnswer = answer.status === "declined" ? own() : null;
       // A store closed for now, or an item no longer available, with no way on offered: the shopper is left with nothing
       // to do, which is Agentcard's to fix (another store with the same item, or when the store opens again).
-      const stuck = /^(checkout_closed|store_closed)$/.test(code ?? "") || storeSays === "checkout_closed" || storeSays === "no_longer_available";
+      // A stop that is Agentcard's own reading of the page (it did not find the product there) is told as itself.
+      const ownReading = /^(product_not_found|off_product_page)$/.test(code ?? "");
+      const stuck = !ownReading && (/^(checkout_closed|store_closed)$/.test(code ?? "") || storeSays === "checkout_closed" || storeSays === "no_longer_available");
       if (!purchase.storeAnswer)
         purchase.stopped = stuck
           ? `${storeSays === "no_longer_available" ? "the item is no longer available" : "the store's checkout is closed for now"}, and Agentcard offered no way on: no other store with the same item, and no time to try again${code ? ` (${code})` : ""}. Agentcard said: ${short(answer.reply)}`
@@ -969,6 +971,85 @@ export function checkTotalNeverMovesSilently(t: EveEvalContext, purchase: Purcha
 }
 
 /**
+ * The amounts that add up to `target` within two cents, as "2 x $30.99 + $20.99", from `prices` taken up to three times
+ * each, or null when none do. Used to tell a total that covers items not on the cart: what is left over is exactly the
+ * price of other products the chat showed.
+ */
+export function madeOf(target: number, prices: readonly number[]): string | null {
+  const unique = [...new Set(prices.filter((price) => price > 0))].sort((a, b) => b - a).slice(0, 8);
+  const counts = unique.map(() => 0);
+  const search = (index: number, left: number): boolean => {
+    if (Math.abs(left) <= 2) return counts.some((count) => count > 0);
+    if (index === unique.length || left < 0) return false;
+    for (let count = 3; count >= 0; count--) {
+      counts[index] = count;
+      if (search(index + 1, left - count * unique[index]!)) return true;
+    }
+    counts[index] = 0;
+    return false;
+  };
+  if (!search(0, target)) return null;
+  return unique.flatMap((price, index) => (counts[index]! > 0 ? [`${counts[index]! > 1 ? `${counts[index]} x ` : ""}${money(price)}`] : [])).join(" + ");
+}
+
+/**
+ * Each cart whose total its lines do not explain, with the numbers, one line each. The total must be each line's price
+ * times its quantity, plus the shipping, tax, fees and discounts the cart's fields carry (its fees and the store's own
+ * summary), else those the reply names, as its reading has them (lib/reply-reader.ts). Two things fail:
+ * - a total those parts do not add up to;
+ * - a total, or a store's new price for the product, whose part beyond the lines is a whole number of the line's own
+ *   price, or the prices of other products the chat showed: the store's cart holds more than this cart's lines;
+ * - a store's price for one unit at least twice the card's, which is what products left in the store's cart by another
+ *   chat look like from this one.
+ * On 2026-11-28 a Costco cart said "the card showed $20.99, but Costco charges $82.97 for it now": 2 x $30.99 + $20.99,
+ * the bottles earlier runs left in the saved account's cart.
+ */
+export function totalNotExplained(purchase: Pick<Purchase, "steps" | "cards">): string[] {
+  const shown = purchase.cards.map((card) => cents(card.price)).filter((price): price is number => price !== null);
+  const reasons = new Set<string>();
+  for (const step of purchase.steps) {
+    const cart = step.answer?.cart;
+    if (!cart?.items.length) continue;
+    const total = cents(cart.total);
+    const lineTotals = cart.items.map((item) => (item.price_in_total ? null : (cents(item.line_total) ?? (cents(item.price) === null ? null : cents(item.price)! * item.qty))));
+    if (total === null || lineTotals.some((amount) => amount === null)) continue;
+    const lines = lineTotals.reduce((sum: number, amount) => sum + amount!, 0);
+    const units = cart.items.map((item) => cents(item.price)).filter((price): price is number => price !== null && price > 0);
+    const said = `after "${short(step.said, 40)}"`;
+    // A store's new price for the product that is the card's price plus whole other products.
+    const change = cart.price_change;
+    const card = cents(change?.card_price);
+    const store = cents(change?.store_price ?? null);
+    if (card !== null && store !== null && store - card > 2) {
+      const extra = madeOf(store - card, [card, ...shown]);
+      if (extra) reasons.add(`${said} the store's price for the product is ${money(store)}, the card's ${money(card)}: the ${money(store - card)} more is ${extra}, the price of products not on this cart, so the store's cart holds more than this cart's lines`);
+      // Products left in a store's cart by an earlier chat cannot be named from this one: a price for one unit at least
+      // twice the card's says the same, in numbers alone.
+      else if (store >= 2 * card) reasons.add(`${said} the store's price for one ${short(cart.items[0]!.name, 50)} is ${money(store)}, ${(store / card).toFixed(1)} times the card's ${money(card)}: that reads as more in the store's cart than this cart's lines`);
+    }
+    // The charges beyond the lines: from the cart's fields first, else as the reply names them.
+    const fromFields = [cart.fees, cart.breakdown?.shipping, cart.breakdown?.tax].map((amount) => cents(amount ?? null)).filter((amount): amount is number => amount !== null);
+    const discountField = cents(cart.breakdown?.discount ?? null);
+    const named = step.reading?.charges ?? [];
+    const fromWords = named.filter((charge) => charge.kind !== "discount").map((charge) => cents(charge.amount)).filter((amount): amount is number => amount !== null);
+    const discountWords = named.filter((charge) => charge.kind === "discount").map((charge) => cents(charge.amount)).filter((amount): amount is number => amount !== null);
+    const charges = fromFields.length > 0 || discountField !== null ? fromFields.reduce((sum, amount) => sum + amount, 0) - Math.abs(discountField ?? 0) : fromWords.reduce((sum, amount) => sum + amount, 0) - discountWords.reduce((sum, amount) => sum + Math.abs(amount), 0);
+    const knownCharges = fromFields.length > 0 || discountField !== null || named.length > 0;
+    const left = total - lines - charges;
+    if (Math.abs(left) <= 2) continue;
+    // Whatever is left over may be tax and shipping a store added and nobody named. It fails when it is whole products.
+    const extra = left > 2 ? madeOf(left, [...units, ...shown]) : null;
+    if (extra) reasons.add(`${said} the total is ${money(total)}, and its lines come to ${money(lines)}${knownCharges ? ` with ${money(charges)} of named charges` : ""}: the ${money(left)} left over is ${extra}, the price of products, so the total covers items not on this cart`);
+    // That the parts do not add up is told only where the parts are all known: an estimate is its lines and its fees, and a
+    // store's summary with its shipping and its tax names everything. Anywhere else, unnamed tax or shipping may be the
+    // difference, so only parts that come to more than the total fail.
+    else if (knownCharges && (left < 0 || (cart.total_is_estimate && cart.fees !== null) || (cart.breakdown?.shipping != null && cart.breakdown?.tax != null)))
+      reasons.add(`${said} the total is ${money(total)}, but its lines (${money(lines)}) and the charges named (${money(charges)}) come to ${money(lines + charges)}`);
+  }
+  return [...reasons];
+}
+
+/**
  * Each amount a reply presents as a price, total, estimate or charge of the cart it shows that the cart's fields
  * contradict, one line per reply. A model reads each reply against the cart (lib/reply-reader.ts), so a true amount the
  * cart holds in another form is never flagged: shipping and tax named apart, the gap between the card's price and the
@@ -1034,6 +1115,10 @@ export function checkChat(t: EveEvalContext, row: StoreCase, purchase: Purchase)
   }
   t.check(mismatched, satisfies((list: string[]) => list.length === 0, `when a reply asks for a yes, the answer's next step is the confirm and no detail is still listed as missing (${mismatched.join("; ") || "it always was"})`)).label("fields-agree-with-reply");
   t.check(misquoted, satisfies((list: string[]) => list.length === 0, `when a reply asks for a yes, it names the amount the yes is for (${misquoted.join("; ") || "it always did"})`)).label("reply-total-is-the-carts");
+
+  // A cart's total is explained by its lines and the charges named, and never covers products that are not on it.
+  const unexplained = totalNotExplained(purchase);
+  t.check(unexplained, satisfies((list: string[]) => list.length === 0, `the cart's total is its lines' prices times their quantities plus the charges named, and covers nothing else (${unexplained.join("; ") || "it always was"})`)).label("cart-total-explained-by-lines");
 
   // Every reply that shows a cart, not only the one that asks for the yes, quotes no amount the cart contradicts.
   const wrong = wrongAmounts(purchase);
