@@ -66,7 +66,9 @@ export interface Reading {
   /** The store the product the reply offers to add is sold at, as the reply says it, or null. */
   offerAt: string | null;
   /** What the reply says the store answered that only the store decides, or null: it is out of stock, it charges another price than the card showed, or a booking has nothing available. */
-  storeSays: "out_of_stock" | "price_differs" | "no_availability" | null;
+  storeSays: "out_of_stock" | "price_differs" | "no_availability" | "checkout_closed" | "no_longer_available" | null;
+  /** True when the reply offers the shopper a way on: the same item at another store, or a later time to try. */
+  offersNextStep: boolean;
 }
 
 /** A contact detail a booking or a guest checkout asks for. */
@@ -143,7 +145,12 @@ const Shape = z.object({
     .array(z.object({ number: z.number().int().nullable(), name: z.string(), store: z.string().nullable(), fits_the_ask: z.boolean().describe("False when the reply says this product is not in the colour, size or other thing the shopper's messages asked for, or offers it in another one.") }))
     .describe("The products the reply asks the shopper to choose among, in its order, with the number it gives each and the store it says each is at."),
   offer_at: z.string().nullable().describe("When the reply offers to add a product, the store it says that product is at, else null."),
-  store_says: z.enum(["out_of_stock", "price_differs", "no_availability", "none"]).describe("What the reply says the store itself answered: out_of_stock when the product is sold out or no longer in stock; price_differs when the store charges another price than the card showed, with that price; no_availability when a booking has no seats, rooms, tables, tickets or times in the dates asked, or nothing to book. none otherwise, including a store that could not be reached or a checkout that failed."),
+  store_says: z
+    .enum(["out_of_stock", "price_differs", "no_availability", "checkout_closed", "no_longer_available", "none"])
+    .describe(
+      "What the reply says the store itself answered: out_of_stock when the product is sold out or out of stock; price_differs when the store charges another price than the card showed, with that price; no_availability when a booking has no seats, rooms, tables, tickets or times in the dates asked, or nothing to book; checkout_closed when the store has closed its online checkout for now, such as for a holiday or the Sabbath, often with when it opens again; no_longer_available when the store or its supplier says, while pricing or checking out, that the item can no longer be bought. none otherwise, including a store that could not be reached, a site that would not respond, or a checkout Agentcard could not get through.",
+    ),
+  offers_next_step: z.boolean().describe("True when the reply offers the shopper a way on: the same item at another store (offered, or already put in a cart there), or a later time: telling the shopper when the store opens again or when to try again counts, even with no question. False when it only says what happened and names neither."),
 });
 
 const RULES = [
@@ -204,6 +211,7 @@ export const modelReader: Reader = async (input) => {
     products: output.products.map((product) => ({ number: product.number, name: product.name, store: product.store, fitsTheAsk: product.fits_the_ask })),
     offerAt: output.offer_at,
     storeSays: output.store_says === "none" ? null : output.store_says,
+    offersNextStep: output.offers_next_step,
   };
 };
 

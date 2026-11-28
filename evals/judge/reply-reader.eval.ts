@@ -38,6 +38,7 @@ interface Case {
   products?: number;
   /** False when every product the reply offers misses the shopper's ask. */
   productsFit?: boolean;
+  offersNextStep?: boolean;
 }
 
 const cases: Case[] = [
@@ -313,6 +314,42 @@ const cases: Case[] = [
     wrong: false,
   },
   {
+    name: "a store closed for the Sabbath, with the item moved to another store",
+    reply: "B&H Photo Video's checkout is closed for now (it says: \"Checkout will be available at 11/28/2026, 5:45 PM ET Sat night (in 19hr and 45min)\"), so I put the same Delkin 64GB card in your cart at Adorama at the same price, $29.99.",
+    cart: { store: "Adorama", items: [line("$29.99", "Delkin 64GB SD card")], fees: null, total: "$29.99", total_is_estimate: true },
+    asks: ["nothing", "address", "other_question", "pay_or_book"],
+    storeSays: "checkout_closed",
+    offersNextStep: true,
+    wrong: false,
+  },
+  {
+    name: "a store closed for now, with when it opens again",
+    reply: "B&H Photo Video's checkout is closed for now. It says checkout will be available again Saturday at 5:45 PM ET. No other store I can buy from has this card, so nothing was ordered or charged.",
+    cart: null,
+    asks: "nothing",
+    storeSays: "checkout_closed",
+    offersNextStep: true,
+    wrong: false,
+  },
+  {
+    name: "an item the supplier says is no longer available, with another store offered",
+    reply: "While pricing your order, Ace Hardware's supplier said the Stanley 16 oz hammer is no longer available, so nothing was ordered or charged. Want me to look for the same hammer at another store?",
+    cart: null,
+    asks: ["add_to_cart", "other_question"],
+    storeSays: "no_longer_available",
+    offersNextStep: true,
+    wrong: false,
+  },
+  {
+    name: "a checkout that would not respond is not closed, and offers nothing",
+    reply: "Ace Hardware's site wouldn't respond at checkout. Nothing was ordered or charged.",
+    cart: null,
+    asks: "nothing",
+    storeSays: null,
+    offersNextStep: false,
+    wrong: false,
+  },
+  {
     name: "as listed or changed",
     reply: "Do you want it as listed: True black, M, or changed?",
     cart: null,
@@ -358,6 +395,7 @@ export default [
       if (one.alreadySaid !== undefined) score("reads-a-question-already-answered", reading.alreadySaid.length > 0 === one.alreadySaid, `expected ${one.alreadySaid ? "a question already answered" : "none"}, read ${JSON.stringify(reading.alreadySaid)}`);
       if (one.offerAt !== undefined) score("reads-where-an-offer-is", (reading.offerAt ?? "").toLowerCase().includes((one.offerAt ?? "").toLowerCase().slice(0, 4)) && (one.offerAt === null) === (reading.offerAt === null), `expected ${one.offerAt}, read ${reading.offerAt}`);
       if (one.storeSays !== undefined) score("reads-the-stores-answer", reading.storeSays === one.storeSays, `expected ${one.storeSays}, read ${reading.storeSays}`);
+      if (one.offersNextStep !== undefined) score("reads-a-way-on", reading.offersNextStep === one.offersNextStep, `expected ${one.offersNextStep}, read ${reading.offersNextStep}`);
       if (one.productsFit !== undefined) score("reads-whether-products-fit", reading.products.some((product) => product.fitsTheAsk) === one.productsFit, `expected ${one.productsFit ? "a product that fits" : "no product that fits"}, read ${JSON.stringify(reading.products)}`);
       if (one.products !== undefined) score("reads-the-products-offered", reading.products.length === one.products, `expected ${one.products}, read ${reading.products.length}`);
     },

@@ -12,7 +12,7 @@ const cart = (total: string, more: Partial<NonNullable<Answer["cart"]>> = {}): N
   ...more,
 });
 
-const read = (more: Partial<Reading> = {}): Reading => ({ asks: "nothing", pricing: null, stillWorking: false, quotesTheCharge: false, wrongAmounts: [], details: [], refused: [], choices: [], fits: [], alreadySaid: [], products: [], offerAt: null, storeSays: null, ...more });
+const read = (more: Partial<Reading> = {}): Reading => ({ asks: "nothing", pricing: null, stillWorking: false, quotesTheCharge: false, wrongAmounts: [], details: [], refused: [], choices: [], fits: [], alreadySaid: [], products: [], offerAt: null, storeSays: null, offersNextStep: false, ...more });
 
 const step = (said: string, reply: string, answerCart: Answer["cart"], reading: Reading | null, next: string | null = null): Step =>
   ({ said, turn: {} as Step["turn"], snapshot: null, reading, answer: { status: "needs_input", next_action: next, reply, cart: answerCart } }) as Step;

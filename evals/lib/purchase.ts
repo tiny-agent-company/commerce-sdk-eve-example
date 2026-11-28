@@ -7,7 +7,7 @@ import { ChatBroke, deliver, type Chat } from "./connection.ts";
 import { cardDays, daysIn, inWindow } from "./dates.ts";
 import { OUTCOME, type Outcome } from "./outcome.ts";
 import { namesAnotherColor, namesAnotherSize, placeholderNames, showsColor, showsSize, valueOf, type Group } from "./questions.ts";
-import { amountsIn, asksPasswordInChat, needsAccount, noRoomByCode, storeAnswerOf, type StoreAnswer } from "./store-answer.ts";
+import { amountsIn, asksPasswordInChat, closedOrGoneOf, needsAccount, noRoomByCode, storeAnswerOf, type StoreAnswer } from "./store-answer.ts";
 import { readReply, type Detail as ReadDetail, type Reading } from "./reply-reader.ts";
 import { savedAccountAt } from "./store-accounts.ts";
 import { SUPPLIERS, type StoreCase } from "./stores.ts";
@@ -606,6 +606,20 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
   };
 
   const say: Purchase["say"] = async (message, afterThePick = false, why) => {
+    const step = await sayAndWait(message, afterThePick, why);
+    // A store that closed its checkout for now, or an item no longer available, ends the chat as the store's own answer
+    // once Agentcard says so and offers a way on, even when the same answer already moved the item to another store's
+    // cart: that cart is Agentcard's next step for the shopper, not the store they named (lib/store-answer.ts).
+    if (step?.answer) {
+      const gone = closedOrGoneOf({ code: codeOf(step), reply: step.answer.reply, said: step.reading?.storeSays, offersNextStep: step.reading?.offersNextStep });
+      if (gone) {
+        purchase.storeAnswer = gone;
+        return null;
+      }
+    }
+    return step;
+  };
+  const sayAndWait = async (message: string, afterThePick: boolean, why?: Step["why"]): Promise<Step | null> => {
     let { step, app } = await sendOnce(message, afterThePick, why);
     // The example chat app answered the shopper itself. Agentcard never got the message, so the shopper types the same
     // message once more: it reaches Agentcard once, and the rest of the chat is still checked.
@@ -673,7 +687,7 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     if (cards.length > 0) purchase.cards = cards;
     // A booking whose search found nothing bookable in the dates asked says so in its code, which is read first.
     if (row.kind === "booking" && noRoomByCode(codeOf(step))) {
-      purchase.storeAnswer = storeAnswerOf({ code: codeOf(step), reply: step.answer?.reply ?? "", said: step.reading?.storeSays, booking: true });
+      purchase.storeAnswer = storeAnswerOf({ code: codeOf(step), reply: step.answer?.reply ?? "", said: step.reading?.storeSays, offersNextStep: step.reading?.offersNextStep, booking: true });
       return purchase;
     }
     const pick = choose(cards);
@@ -687,7 +701,7 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
     const noRoom = ofTheProduct.length > 0 ? storeAnswerOf({ code: null, reply: "", booking: row.kind === "booking", cards: ofTheProduct, free: row.free }) : null;
     const question = !noRoom && !row.cards && step.answer ? nextMessage(step.answer, step.reading, row, said) : null;
     if (!question) {
-      const own = noRoom ? { ...noRoom, said: short(step.answer?.reply ?? "", 300) } : storeAnswerOf({ code: codeOf(step), reply: step.answer?.reply ?? "", said: step.reading?.storeSays, booking: row.kind === "booking", cards: ofTheProduct, free: row.free });
+      const own = noRoom ? { ...noRoom, said: short(step.answer?.reply ?? "", 300) } : storeAnswerOf({ code: codeOf(step), reply: step.answer?.reply ?? "", said: step.reading?.storeSays, offersNextStep: step.reading?.offersNextStep, booking: row.kind === "booking", cards: ofTheProduct, free: row.free });
       if (own) {
         purchase.storeAnswer = own;
         return purchase;
@@ -740,14 +754,21 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
       return purchase;
     }
     if (row.kind === "booking" && noRoomByCode(code)) {
-      purchase.storeAnswer = storeAnswerOf({ code, reply: answer.reply, said: step.reading?.storeSays, booking: true });
+      purchase.storeAnswer = storeAnswerOf({ code, reply: answer.reply, said: step.reading?.storeSays, offersNextStep: step.reading?.offersNextStep, booking: true });
       return purchase;
     }
     const storeSays = step.reading?.storeSays;
-    const own = () => storeAnswerOf({ code, reply: answer.reply, said: storeSays, booking: row.kind === "booking", priceChanged: Boolean(answer.cart?.price_change) && answer.status === "declined" });
+    const wayOn = step.reading?.offersNextStep;
+    const own = () => storeAnswerOf({ code, reply: answer.reply, said: storeSays, offersNextStep: wayOn, booking: row.kind === "booking", priceChanged: Boolean(answer.cart?.price_change) && answer.status === "declined" });
     if (["declined", "needs_card", "approval_sent", "placing", "order_placed"].includes(answer.status)) {
       purchase.storeAnswer = answer.status === "declined" ? own() : null;
-      if (!purchase.storeAnswer) purchase.stopped = `Agentcard stopped with "${answer.status}"${code ? ` (${code})` : ""} before ${goal === "cart" ? "a cart existed" : "the purchase was ready to pay"}: ${short(answer.reply)}`;
+      // A store closed for now, or an item no longer available, with no way on offered: the shopper is left with nothing
+      // to do, which is Agentcard's to fix (another store with the same item, or when the store opens again).
+      const stuck = /^(checkout_closed|store_closed)$/.test(code ?? "") || storeSays === "checkout_closed" || storeSays === "no_longer_available";
+      if (!purchase.storeAnswer)
+        purchase.stopped = stuck
+          ? `${storeSays === "no_longer_available" ? "the item is no longer available" : "the store's checkout is closed for now"}, and Agentcard offered no way on: no other store with the same item, and no time to try again${code ? ` (${code})` : ""}. Agentcard said: ${short(answer.reply)}`
+          : `Agentcard stopped with "${answer.status}"${code ? ` (${code})` : ""} before ${goal === "cart" ? "a cart existed" : "the purchase was ready to pay"}: ${short(answer.reply)}`;
       return purchase;
     }
     // The store is still pricing the cart, and nothing asks the shopper anything: they wait for its total, asking for an
