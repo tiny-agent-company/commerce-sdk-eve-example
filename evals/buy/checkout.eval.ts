@@ -156,7 +156,7 @@ function finish(t: EveEvalContext, row: StoreCase, purchase: Purchase, yes: Yes 
     // cart already showed before the yes is not news, so only one that appeared with this answer counts. A store that
     // sent no total in the time the shopper waited, while Agentcard kept them told, is the store's own answer too.
     purchase.storeAnswer =
-      storeAnswerOf({ code: stop ?? step.snapshot?.error_code ?? null, reply: step.answer?.reply ?? "", said: step.reading?.storeSays, booking: false, priceChanged: Boolean(step.answer?.cart?.price_change) && !ready.answer?.cart?.price_change }) ??
+      storeAnswerOf({ code: stop ?? step.snapshot?.error_code ?? null, reply: step.answer?.reply ?? "", said: step.reading?.storeSays, offersNextStep: step.reading?.offersNextStep, booking: false, priceChanged: Boolean(step.answer?.cart?.price_change) && !ready.answer?.cart?.price_change }) ??
       slowToPrice([...new Set([...yes.waited, step])], yes.waitedMs, "after the yes");
     if (purchase.storeAnswer) return;
   }

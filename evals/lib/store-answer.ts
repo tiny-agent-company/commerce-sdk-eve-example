@@ -26,7 +26,9 @@ export type StoreAnswerKind =
   | "no seats or availability"
   | "the store needs an account"
   | "no test account at this store"
-  | "the store was slow to price";
+  | "the store was slow to price"
+  | "the store's checkout is closed for now"
+  | "the item is no longer available";
 
 export interface StoreAnswer {
   what: StoreAnswerKind;
@@ -41,7 +43,9 @@ export interface AnswerFacts {
   code: string | null;
   reply: string;
   /** What the reply says the store answered, as its reading by a model has it (lib/reply-reader.ts), when there is one. */
-  said?: "out_of_stock" | "price_differs" | "no_availability" | null;
+  said?: "out_of_stock" | "price_differs" | "no_availability" | "checkout_closed" | "no_longer_available" | null;
+  /** True when the reply offers the shopper a way on: the same item at another store, or a later time to try (its reading). */
+  offersNextStep?: boolean;
   /** True for a flight, a room, a car, a table, a class, a ticket or an event: what runs out there is seats, not stock. */
   booking: boolean;
   /** True when the cart says the store charges another price than the card showed. */
@@ -74,6 +78,12 @@ export function storeAnswerOf(facts: AnswerFacts): StoreAnswer | null {
   const fromFields = (what: StoreAnswerKind): StoreAnswer => ({ what, read_from: "the answer's fields", said });
   const fromWords = (what: StoreAnswerKind): StoreAnswer => ({ what, read_from: "the reply's words", said });
 
+  // A store that closed its checkout for now, or an item the store or its supplier says can no longer be bought, is the
+  // store's own answer when Agentcard says so plainly and offers the shopper a way on: the same item at another store, or
+  // a later time. The stop code comes first; without one, the reply's reading says it. A closure Agentcard leaves the
+  // shopper stuck at, with nothing offered, stays a failure.
+  const closedOrGone = closedOrGoneOf(facts);
+  if (closedOrGone) return closedOrGone;
   // A booking's search that found nothing bookable in the dates asked says so in its code, `no_availability`, which is
   // read before anything else: the code is the surest sign there is.
   if (facts.booking && noRoomByCode(facts.code)) return fromFields("no seats or availability");
@@ -87,6 +97,22 @@ export function storeAnswerOf(facts: AnswerFacts): StoreAnswer | null {
   if (facts.booking && facts.said === "no_availability") return fromWords("no seats or availability");
   if (!facts.booking && facts.said === "out_of_stock") return fromWords("out of stock");
   if (facts.said === "price_differs") return fromWords("the store's price differs from the card's");
+  return null;
+}
+
+/** The stop codes that say a store has closed its online checkout for now (#18111 adds `checkout_closed`). */
+const CLOSED_CODE = /^(checkout_closed|store_closed)$/;
+
+/**
+ * The store's own answer "closed for now" or "no longer available", or null. Read from the stop code first, then from the
+ * reply's reading. A way on must be offered, as the reply's reading says; with no reading, a closed code alone counts.
+ */
+export function closedOrGoneOf(facts: Pick<AnswerFacts, "code" | "reply" | "said" | "offersNextStep">): StoreAnswer | null {
+  const said = short(facts.reply);
+  const wayOn = facts.offersNextStep;
+  if (CLOSED_CODE.test((facts.code ?? "").toLowerCase()) && wayOn !== false) return { what: "the store's checkout is closed for now", read_from: "the answer's fields", said };
+  if (facts.said === "checkout_closed" && wayOn) return { what: "the store's checkout is closed for now", read_from: "the reply's words", said };
+  if (facts.said === "no_longer_available" && wayOn) return { what: "the item is no longer available", read_from: "the reply's words", said };
   return null;
 }
 

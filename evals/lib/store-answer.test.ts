@@ -77,3 +77,20 @@ test("with no field for it, the reply's reading says what the store answered, an
   // No reading, no answer from words: the words are never matched against a list.
   assert.equal(storeAnswerOf({ code: null, reply: "The green hammer is out of stock.", booking: false }), null);
 });
+
+test("a checkout closed for now is the store's own answer when a way on is offered, the code first", () => {
+  const moved = "B&H Photo Video's checkout is closed for now (it says: \"Checkout will be available at 11/28/2026, 5:45 PM ET Sat night\"), so I put the same Delkin 64GB card in your cart at Other Store at the same price, $29.99.";
+  assert.equal(storeAnswerOf({ code: "checkout_closed", reply: moved, booking: false, offersNextStep: true })?.what, "the store's checkout is closed for now");
+  assert.equal(storeAnswerOf({ code: "checkout_closed", reply: moved, booking: false, offersNextStep: true })?.read_from, "the answer's fields");
+  assert.equal(storeAnswerOf({ code: "checkout_closed", reply: moved, booking: false })?.what, "the store's checkout is closed for now", "with no reading, the code alone says it");
+  assert.equal(storeAnswerOf({ code: null, reply: moved, said: "checkout_closed", offersNextStep: true, booking: false })?.read_from, "the reply's words");
+  // Closed, and the shopper is left with nothing to do: not the store's own answer.
+  assert.equal(storeAnswerOf({ code: "checkout_closed", reply: "B&H's checkout is closed.", booking: false, offersNextStep: false }), null);
+  assert.equal(storeAnswerOf({ code: null, reply: "B&H's checkout is closed.", said: "checkout_closed", offersNextStep: false, booking: false }), null);
+});
+
+test("an item no longer available while pricing is the store's own answer only with a way on", () => {
+  const reply = "Ace Hardware's supplier says the Stanley hammer is no longer available, so nothing was ordered. Want me to look for it at another store?";
+  assert.equal(storeAnswerOf({ code: null, reply, said: "no_longer_available", offersNextStep: true, booking: false })?.what, "the item is no longer available");
+  assert.equal(storeAnswerOf({ code: null, reply: "The item is no longer available.", said: "no_longer_available", offersNextStep: false, booking: false }), null);
+});
