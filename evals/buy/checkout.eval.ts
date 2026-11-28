@@ -2,7 +2,7 @@ import { defineEval, type EveEvalContext } from "eve/evals";
 import { satisfies } from "eve/evals/expect";
 import { chatAgainOnce } from "../lib/connection.ts";
 import { limitFor, oneAfterAnother } from "../lib/one-after-another.ts";
-import { cartStep, checkCart, checkChat, checkReached, checkTotalNeverMovesSilently, endedElsewhere, KEEP_WAITING, logPath, PRICING_WITHIN_MS, readyForTheYes, sandboxCredentials, shop, slowToPrice, stillPricing, type Purchase, type Step } from "../lib/purchase.js";
+import { cartStep, checkCart, checkChat, checkReached, checkTotalNeverMovesSilently, endedElsewhere, logPath, offersToKeepWaiting, PRICING_WITHIN_MS, readyForTheYes, sandboxCredentials, shop, slowToPrice, stillPricing, type Purchase, type Step } from "../lib/purchase.js";
 import { needsAccount, storeAnswerOf } from "../lib/store-answer.ts";
 import { STORES, SUPPLIERS, type StoreCase } from "../lib/stores.js";
 
@@ -94,13 +94,13 @@ async function talk(t: EveEvalContext, row: StoreCase): Promise<{ purchase: Purc
   for (let repriced = 0; step && step.answer?.status === "needs_input"; ) {
     // After a few minutes Agentcard offers to keep waiting or to look at another store. The shopper keeps waiting, up to
     // the same limit: the store's own total is what they would say yes to.
-    const offersToWait = KEEP_WAITING.test(step.answer.reply);
-    if (stillPricing(step.answer) || offersToWait) {
+    const offersToWait = offersToKeepWaiting(step);
+    if (stillPricing(step) || offersToWait) {
       waited.push(step);
       if (Date.now() - since > PRICING_WITHIN_MS) break;
       await t.sleep(30_000);
       step = await purchase.say(offersToWait ? "keep waiting" : "any update?", true, "waiting");
-    } else if (readyForTheYes(step.answer) && repriced < 3) {
+    } else if (readyForTheYes(step) && repriced < 3) {
       repriced += 1;
       step = await purchase.say(step.answer.cart?.total ? `yes, place the order for ${step.answer.cart.total}` : "yes, place the order", true);
     } else break;
@@ -161,7 +161,7 @@ function finish(t: EveEvalContext, row: StoreCase, purchase: Purchase, yes: Yes 
     if (purchase.storeAnswer) return;
   }
   const waited = Math.round(yes.waitedMs / 60_000);
-  t.check(atPayment, satisfies((reached: boolean) => reached, `the yes is stopped at the payment step (status ${status}, reason ${stop ?? "none"}, links ${links.join(", ") || "none"}${stillPricing(step.answer ?? null) ? `; the store had still not sent its total ${waited} minutes after the yes, and Agentcard did not keep the shopper told and offer to keep waiting or to try another store` : ""}; Agentcard said: ${(step.answer?.reply ?? "").replace(/\s+/g, " ").slice(0, 240)})`)).label("stopped-at-payment");
+  t.check(atPayment, satisfies((reached: boolean) => reached, `the yes is stopped at the payment step (status ${status}, reason ${stop ?? "none"}, links ${links.join(", ") || "none"}${stillPricing(step) ? `; the store had still not sent its total ${waited} minutes after the yes, and Agentcard did not keep the shopper told and offer to keep waiting or to try another store` : ""}; Agentcard said: ${(step.answer?.reply ?? "").replace(/\s+/g, " ").slice(0, 240)})`)).label("stopped-at-payment");
 }
 
 export default STORES.map((row) => {

@@ -251,7 +251,7 @@ const clothing: StoreCase[] = [
   { ...tee("Macy's", /macy/i, "black"), ask: "a black cotton crew neck t-shirt for men in size medium from Macy's" },
   { ...tee("Kohl's", /kohl/i, "black", "catalog"), ask: "a black cotton crew neck t-shirt for men in size medium from Kohl's" },
   { ...tee("eBay", /ebay/i, "black"), ask: "a new black cotton crew neck t-shirt for men in size medium on eBay, Buy It Now" },
-  { ...tee("TikTok Shop", /tiktok/i, "black"), ask: "a black cotton t-shirt for men in size medium from TikTok Shop" },
+  { ...tee("TikTok Shop", /tiktok/i, "black"), ask: "a black cotton t-shirt for men in size medium from TikTok Shop", needsAccount: true },
   { ...tee("Pokémon Center", /pok[eé]mon/i, "black"), ask: "a black Pikachu t-shirt for adults in size medium from Pokémon Center" },
   { ...tee("Zazzle", /zazzle/i, "white"), ask: "a white t-shirt for men with a mountain design in size medium from Zazzle" },
 ];
