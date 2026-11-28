@@ -216,9 +216,19 @@ function snapshotOf(turn: EveEvalTurn): Snapshot | null {
 }
 
 /** Every card a turn showed, with what its link says: where it leads, whether it has room, and when it is. */
-function shownCards(turn: EveEvalTurn): ShownCard[] {
+/** A product link as a turn's snapshot carries it. */
+type ProductLink = Snapshot["links"][number];
+
+/**
+ * Every card a turn showed, with what its link says: where it leads, whether it has room, and when it is. `seen` holds
+ * every product link the chat carried so far, by product id, and takes this turn's: Agentcard sends a card's link only on
+ * the turn that first shows the card, so a card shown again later finds its link there. On 2026-11-28 TikTok Shop cards
+ * shown a second time were graded as having no store page.
+ */
+export function shownCards(turn: EveEvalTurn, seen: Map<string, ProductLink> = new Map()): ShownCard[] {
   const snapshot = snapshotOf(turn);
-  const links = new Map((snapshot?.links ?? []).filter((link) => link.kind === "product" && link.productId).map((link) => [link.productId!, link]));
+  for (const link of snapshot?.links ?? []) if (link.kind === "product" && link.productId) seen.set(link.productId, link);
+  const links = seen;
   return cardsShown(turn).map((card) => {
     const link = card.id === null ? undefined : links.get(card.id);
     let page: ShownCard["page"] = null;
@@ -697,6 +707,9 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
 
   // A card is picked only when it is the product, at the store the shopper named, with a price to pay (a table is free),
   // with room when it says whether it has any, for the days asked, and not in another colour or size than asked.
+  // Every product link the chat carried so far, by product id (see `shownCards`).
+  const linksSeen = new Map<string, ProductLink>();
+  for (const earlier of purchase.steps) shownCards(earlier.turn, linksSeen);
   const fits = (card: ShownCard) =>
     row.product.test(card.name) &&
     (row.free === true || dollars(card.price) !== null) &&
@@ -719,7 +732,7 @@ export async function shop(t: EveEvalContext, row: StoreCase, goal: "cart" | "ch
   // first: the delivery address for food, or "want me to add it to your cart?" when the reply names the product and
   // shows no card for it.
   for (let asked = 0; asked < 4 && !step.answer?.cart && !purchase.picked; asked++) {
-    const cards = shownCards(step.turn);
+    const cards = shownCards(step.turn, linksSeen);
     if (cards.length > 0) purchase.cards = cards;
     // A booking whose search found nothing bookable in the dates asked says so in its code, which is read first.
     if (row.kind === "booking" && noRoomByCode(codeOf(step))) {
